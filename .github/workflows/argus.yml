@@ -18,6 +18,15 @@ on:
           '"ubuntu-latest"' for a suite outside the org (its own GitHub-hosted minutes).
         type: string
         default: '["self-hosted", "linux", "odoo"]'
+    # Declared so that a caller outside the organization can pass them by name:
+    # `secrets: inherit` only crosses repositories of the same organization.
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
+      ARGUS_APP_ID:
+        required: false
+      ARGUS_APP_PRIVATE_KEY:
+        required: false
 
 jobs:
   review:

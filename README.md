@@ -11,6 +11,7 @@ made once and reaches every suite.
 Both are reusable workflows (`workflow_call`), run on the self-hosted runners of the
 organization. A suite outside the organization (`dhongu/deltatech`) passes
 `runs-on: '"ubuntu-latest"'` and runs them on its own GitHub-hosted minutes.
+It also passes the secrets by name (`secrets: inherit` only works inside the organization).
 
 ## In a suite
 

@@ -27,6 +27,25 @@ on:
         description: The Postgres image of the suite's test.yml (pgvector where Enterprise `ai` is in).
         type: string
         default: postgres:13.0
+    # Declared so that a caller outside the organization can pass them by name:
+    # `secrets: inherit` only crosses repositories of the same organization.
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
+      ARGUS_APP_ID:
+        required: false
+      ARGUS_APP_PRIVATE_KEY:
+        required: false
+      MENTOR_APP_ID:
+        required: false
+      MENTOR_APP_PRIVATE_KEY:
+        required: false
+      BITSHOP:
+        required: false
+      ENTERPRISE_TOKEN:
+        required: false
+      TERRABIT_TOKEN:
+        required: false
 
 permissions:
   contents: read
