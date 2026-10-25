@@ -18,6 +18,12 @@ on:
           '"ubuntu-latest"' for a suite outside the org (its own GitHub-hosted minutes).
         type: string
         default: '["self-hosted", "linux", "odoo"]'
+      lint:
+        description: >-
+          Run tb-odoo-lint on the PR's .py/.xml files first; Argus confirms or rejects
+          each finding (pilot: off by default).
+        type: boolean
+        default: false
     # Declared so that a caller outside the organization can pass them by name:
     # `secrets: inherit` only crosses repositories of the same organization.
     secrets:
@@ -138,6 +144,39 @@ jobs:
           fi
           rm -rf .argus-base .ci-agents
           chmod +x .argus/*.sh
+      # tb-odoo-lint (Python stdlib only) at a fixed commit, v1.5.0.
+      - name: Checkout tb-odoo-lint
+        if: inputs.lint
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: dhongu/terrabit-pre-commit-hooks
+          ref: 9aea6d5acb3560a6ab13e43ec7ee421dc76461ae # v1.5.0
+          path: .tb-lint
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: terrabit_pre_commit_hooks
+      # Its findings on the PR's files go to .argus/lint.json, for Argus to confirm or
+      # reject. Advisory: a failure here leaves Argus to review as before.
+      - name: Run tb-odoo-lint on the PR's files
+        if: inputs.lint
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          trap 'rm -rf .tb-lint' EXIT
+          files="$RUNNER_TEMP/lint-files.txt"
+          gh api --paginate "repos/${{ github.repository }}/pulls/$PR_NUMBER/files" \
+            --jq '.[] | select(.status != "removed") | .filename' \
+            | grep -E '\.(py|xml)$' > "$files" || true
+          if [ -s "$files" ]; then
+            xargs -d '\n' python3 .tb-lint/terrabit_pre_commit_hooks/tb_odoo_lint.py \
+              --json --warn-only < "$files" > "$RUNNER_TEMP/lint.json"
+            mv "$RUNNER_TEMP/lint.json" .argus/lint.json
+            python3 -c 'import json; print(len(json.load(open(".argus/lint.json"))), "findings")'
+          else
+            echo "No .py/.xml files in the PR."
+          fi
       - name: Argus review
         uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
         env:
