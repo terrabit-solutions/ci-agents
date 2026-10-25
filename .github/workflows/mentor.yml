@@ -502,12 +502,14 @@ jobs:
           set -e
           # A secret may be a bare token or user:token; basic auth needs user:password.
           auth() {
-            local cred hdr
-            cred=$(printf '%s' "$2" | tr -d '\r\n')
-            case "$cred" in *:*) ;; *) cred="x-access-token:$cred" ;; esac
-            hdr=$(printf '%s' "$cred" | base64 -w0)
-            echo "::add-mask::$hdr"
-            printf -v "$1" 'AUTHORIZATION: basic %s' "$hdr"
+            # Underscored locals: a plain `local hdr` would shadow the caller's
+            # variable, and printf -v would then write the header into it.
+            local _cred _b64
+            _cred=$(printf '%s' "$2" | tr -d '\r\n')
+            case "$_cred" in *:*) ;; *) _cred="x-access-token:$_cred" ;; esac
+            _b64=$(printf '%s' "$_cred" | base64 -w0)
+            echo "::add-mask::$_b64"
+            printf -v "$1" 'AUTHORIZATION: basic %s' "$_b64"
           }
           l10n_ro_doc_screenshots() {
             local hdr extra="$RUNNER_TEMP/extra-addons"
@@ -519,7 +521,10 @@ jobs:
                 https://github.com/terrabit-solutions/l10n_ro_ent.git "$extra/l10n_ro_ent" \
               && git -c http.https://github.com/.extraheader= -c "http.https://github.com/.extraheader=$hdr" \
                 -C "$extra/l10n_ro_ent" sparse-checkout set l10n_ro_doc_screenshots; then :; else
-              echo "::warning::l10n_ro_ent not readable: tests importing l10n_ro_doc_screenshots will be skipped."
+              # The read token always covers l10n_ro_ent: a failed clone would only
+              # skip the screenshot tests and report a green run with no screenshots.
+              echo "::error::Could not clone l10n_ro_doc_screenshots from l10n_ro_ent."
+              return 1
             fi
           }
           git show "$BASE:.github/scripts/vendor_git_addons.py" > "$RUNNER_TEMP/vendor_git_addons.py"
