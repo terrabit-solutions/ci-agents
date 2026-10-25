@@ -1,0 +1,196 @@
+name: argus
+
+# Argus, the advisory AI review of a suite's pull requests: it comments, it never blocks the
+# merge. Called by .github/workflows/argus.yml of each suite (which sets the triggers). The
+# rules (argus/REVIEW.md) and the scripts come from this repository, plus the suite's own
+# .github/argus/REVIEW.local.md from its base branch, so a PR cannot change how it is reviewed.
+
+on:
+  workflow_call:
+    inputs:
+      agents-ref:
+        description: Branch or tag of terrabit-solutions/ci-agents for the rules and scripts.
+        type: string
+        default: main
+
+jobs:
+  review:
+    # PRs from forks get no secrets: skip them. Mentor's pushes only add the
+    # consultant sheet, already audited by its own checker, and the action
+    # refuses runs started by a bot: skip them too.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.sender.login != 'mentor-terrabit[bot]'
+    # The org has no GitHub-hosted minutes: same VPS runners as test.yml.
+    # At job level, so a skipped run (Mentor's push) does not cancel the
+    # review in progress; a new push by the author does.
+    concurrency:
+      group: argus-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    runs-on: [self-hosted, linux, odoo]
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 1
+          # Argus may read the workspace: keep the token out of .git/config.
+          persist-credentials: false
+      # Argus reads the PR and comments through `gh`, which the runner may lack.
+      - name: Install gh if missing
+        env:
+          GH_VERSION: "2.102.0"
+          # From gh_2.102.0_checksums.txt of the release.
+          GH_SHA256: "bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386"
+        run: |
+          if ! command -v gh >/dev/null; then
+            curl -fsSL -o "$RUNNER_TEMP/gh.tar.gz" \
+              "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz"
+            echo "$GH_SHA256  $RUNNER_TEMP/gh.tar.gz" | sha256sum -c -
+            tar -xzf "$RUNNER_TEMP/gh.tar.gz" -C "$RUNNER_TEMP"
+            echo "$RUNNER_TEMP/gh_${GH_VERSION}_linux_amd64/bin" >> "$GITHUB_PATH"
+          fi
+      # The action's own Bun setup needs `unzip`, which the runner lacks:
+      # extract with Python instead, once per runner (the tool cache persists).
+      - name: Install Bun without unzip
+        id: bun
+        env:
+          BUN_VERSION: "1.4.4"
+          # From SHASUMS256.txt of the release.
+          BUN_SHA256: "bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c"
+        run: |
+          # Only the zip is cached; it is checked on every run and extracted
+          # fresh, so a binary altered on the persistent runner is never used.
+          zip="$RUNNER_TOOL_CACHE/bun/bun-${BUN_VERSION}-linux-x64.zip"
+          mkdir -p "$(dirname "$zip")"
+          if ! echo "$BUN_SHA256  $zip" | sha256sum -c --status - 2>/dev/null; then
+            curl -fsSL -o "$zip" \
+              "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
+            echo "$BUN_SHA256  $zip" | sha256sum -c -
+          fi
+          python3 -m zipfile -e "$zip" "$RUNNER_TEMP/bun"
+          chmod +x "$RUNNER_TEMP/bun/bun-linux-x64/bun"
+          echo "path=$RUNNER_TEMP/bun/bun-linux-x64/bun" >> "$GITHUB_OUTPUT"
+      - name: Checkout Odoo 19 core (odoo/ only, to check the ORM API)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: odoo/odoo
+          ref: "19.0"
+          path: .odoo-src
+          fetch-depth: 1
+          # Argus may read the workspace: keep the token out of .git/config.
+          persist-credentials: false
+          sparse-checkout: odoo
+          sparse-checkout-cone-mode: true
+      # Comments signed by the Argus GitHub App; the same token reads this repository.
+      - name: Argus app token
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.ARGUS_APP_ID }}
+          private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
+          owner: terrabit-solutions
+          repositories: ${{ github.event.repository.name }},ci-agents
+          permission-contents: read
+          permission-pull-requests: write
+      - name: Checkout the shared Argus rules
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: terrabit-solutions/ci-agents
+          ref: ${{ inputs.agents-ref }}
+          token: ${{ steps.app.outputs.token }}
+          path: .ci-agents
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: argus
+      # The suite's own rules, from its base branch: the PR cannot change them.
+      - name: Checkout the suite's rules from the base branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .argus-base
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: .github/argus
+          sparse-checkout-cone-mode: true
+      - name: Prepare Argus rules
+        run: |
+          rm -rf .argus
+          cp -r .ci-agents/argus .argus
+          if [ -f .argus-base/.github/argus/REVIEW.local.md ]; then
+            cp .argus-base/.github/argus/REVIEW.local.md .argus/REVIEW.local.md
+          fi
+          rm -rf .argus-base .ci-agents
+          chmod +x .argus/*.sh
+      - name: Argus review
+        uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        env:
+          # Read by the .argus/*.sh scripts.
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.app.outputs.token }}
+          path_to_bun_executable: ${{ steps.bun.outputs.path }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Fă review-ul acestui PR după regulile din .argus/REVIEW.md.
+            Citește întâi fișierul acela și respectă-l întocmai.
+          # The runner is persistent: file tools are limited to the job
+          # workspace (repo + .odoo-src), and the runner's home dotfiles,
+          # its credentials and system paths are denied outright.
+          claude_args: |
+            --model sonnet
+            --max-turns 40
+            --allowedTools "Read(./**),Grep(./**),Glob(./**),mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(.argus/comment.sh:*),Bash(.argus/needs-pacioli.sh)"
+            --disallowedTools "Read(~/.*),Read(~/.*/**),Read(~/runner-*/.*),Read(//etc/**),Read(//proc/**),Read(//root/**)"
+      # The action hides Claude's output. Show only the commands the
+      # permission rules refused and, on failure, the final result text,
+      # which carries the error (auth, quota, ...). The tokens used go to the
+      # run's Summary page.
+      - name: Show Claude error, refused commands and usage
+        if: always()
+        env:
+          JOB_FAILED: ${{ job.status == 'failure' }}
+        run: |
+          out="$RUNNER_TEMP/claude-execution-output.json"
+          if [ ! -s "$out" ]; then
+            echo "Claude did not run: an earlier step failed, see its log."
+            exit 0
+          fi
+          python3 - "$out" <<'EOF'
+          import json, os, sys
+          try:
+              data = json.load(open(sys.argv[1]))
+          except ValueError as err:
+              sys.exit(f"Unreadable Claude output: {err}")
+          for msg in data if isinstance(data, list) else [data]:
+              if msg.get("type") != "result":
+                  continue
+              for denial in msg.get("permission_denials") or []:
+                  print("Refused:", denial.get("tool_name"), json.dumps(denial.get("tool_input"), ensure_ascii=False))
+              if os.environ.get("JOB_FAILED") == "true":
+                  print(msg.get("result") or msg.get("errors") or msg)
+              usage = msg.get("usage") or {}
+              fmt = lambda n: f"{n or 0:,}".replace(",", ".")
+              rows = [
+                  ("Tokeni citiți (intrare)", fmt(usage.get("input_tokens"))),
+                  ("Tokeni citiți din cache", fmt(usage.get("cache_read_input_tokens"))),
+                  ("Tokeni scriși în cache", fmt(usage.get("cache_creation_input_tokens"))),
+                  ("Tokeni scriși (ieșire)", fmt(usage.get("output_tokens"))),
+                  ("Pași", msg.get("num_turns", "")),
+                  ("Durată", f"{(msg.get('duration_ms') or 0) / 1000:.0f} s"),
+                  ("Cost echivalent API", f"{msg.get('total_cost_usd') or 0:.3f} $".replace(".", ",")),
+              ]
+              for model, mu in (msg.get("modelUsage") or {}).items():
+                  rows.append((f"Model {model}", f"{fmt(mu.get('inputTokens'))} intrare, {fmt(mu.get('outputTokens'))} ieșire"))
+              table = "| Consum Argus | |\n|---|---|\n" + "\n".join(f"| {k} | {v} |" for k, v in rows)
+              table += "\n\nPe abonament nu se plătește pe review: costul arată doar cât consumă din limita de 5 ore și din cea săptămânală.\n"
+              print(table)
+              if os.environ.get("GITHUB_STEP_SUMMARY"):
+                  with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
+                      fh.write(table)
+          EOF

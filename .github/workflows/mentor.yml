@@ -1,0 +1,746 @@
+name: mentor
+
+# Mentor, called by .github/workflows/mentor.yml of each suite (which sets the triggers):
+# when a PR changes a module functionally, it writes or updates the module's consultant
+# sheet (readme/FISA_CONSULTANT.md) and regenerates its screenshots, as Mentor commits on
+# the same PR. Rules (mentor/MENTOR.md) and scripts come from this repository, so a PR
+# cannot change them. Label a PR "mentor-skip" to leave it alone.
+#
+# The suite provides two scripts on its base branch, for the screenshots job:
+#   .github/mentor/private_repos.sh  the private clones (the only step with credentials)
+#   .github/mentor/install.sh        what its test.yml installs before `pip install -r`
+
+on:
+  workflow_call:
+    inputs:
+      agents-ref:
+        description: Branch or tag of terrabit-solutions/ci-agents for the rules and scripts.
+        type: string
+        default: main
+      postgres-image:
+        description: The Postgres image of the suite's test.yml (pgvector where Enterprise `ai` is in).
+        type: string
+        default: postgres:13.0
+
+permissions:
+  contents: read
+
+jobs:
+  sheet:
+    # Not on drafts, forks, Mentor's own pushes or PRs labelled mentor-skip.
+    if: >-
+      !github.event.pull_request.draft &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.sender.login != 'mentor-terrabit[bot]' &&
+      !contains(github.event.pull_request.labels.*.name, 'mentor-skip')
+    # At job level, so Mentor's own push (job skipped) does not cancel the run
+    # that made it; a new push by the author does.
+    concurrency:
+      group: mentor-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    # The org has no GitHub-hosted minutes: same VPS runners as test.yml.
+    runs-on: [self-hosted, linux, odoo]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          # Claude may read the workspace: keep the token out of .git/config.
+          persist-credentials: false
+      # Argus Terrabit app (read-only): this repository, the RO accounting reference and the
+      # Terrabit plugin with the fisa-modul skill and the verificator-fisa agent.
+      - name: Read token
+        id: read
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.ARGUS_APP_ID }}
+          private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
+          owner: terrabit-solutions
+          repositories: ci-agents,l10n_ro_ent,terrabit-claude
+          permission-contents: read
+      - name: Checkout the Mentor rules and scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: terrabit-solutions/ci-agents
+          ref: ${{ inputs.agents-ref }}
+          token: ${{ steps.read.outputs.token }}
+          path: .ci-agents
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: mentor
+      - name: Modules whose sheet must follow the PR
+        id: select
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 -I .ci-agents/mentor/select_modules.py "$(git merge-base "$BASE" "$HEAD")" "$HEAD" \
+            mentor-terrabit --limit 2 > "$RUNNER_TEMP/selection.json"
+          python3 - "$RUNNER_TEMP/selection.json" <<'EOF'
+          import json, os, sys
+          data = json.load(open(sys.argv[1]))
+          json.dump(data["selected"], open(".mentor-modules.json", "w"), ensure_ascii=False, indent=2)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"count={len(data['selected'])}\n")
+          lines = [f"- `{m['module']}`: {m['action']} ({m['reason']})" for m in data["selected"]]
+          lines += [f"- `{m}`: lăsat pentru un push următor (cel mult 2 module pe rulare)" for m in data["skipped"]]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
+              fh.write("## Mentor\n\n" + ("\n".join(lines) or "Nicio fișă de făcut sau de actualizat.") + "\n\n")
+          EOF
+      - name: Checkout the RO accounting reference
+        if: steps.select.outputs.count != '0'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: terrabit-solutions/l10n_ro_ent
+          ref: "19.0"
+          token: ${{ steps.read.outputs.token }}
+          path: odoo-addons/l10n_ro_ent
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: |
+            skills/contabilitate-ro
+            l10n_ro_advance_invoice/readme
+      - name: Checkout the Terrabit plugin
+        if: steps.select.outputs.count != '0'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: terrabit-solutions/terrabit-claude
+          ref: main
+          token: ${{ steps.read.outputs.token }}
+          path: .mentor/plugin
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: |
+            plugins/terrabit-odoo/skills/fisa-modul
+            plugins/terrabit-odoo/agents
+      # The action restores .claude/ from the base branch before Claude starts,
+      # so the skill and the agent's instructions stay under .mentor/ and Claude
+      # reads them from there. MENTOR.md comes from this repository, so the PR
+      # under review cannot change Mentor's rules.
+      - name: Prepare Mentor
+        if: steps.select.outputs.count != '0'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          cp -r .mentor/plugin/plugins/terrabit-odoo/skills/fisa-modul .mentor/fisa-modul
+          cp .mentor/plugin/plugins/terrabit-odoo/agents/verificator-fisa.md .mentor/verificator-fisa.md
+          # The PR diff on the selected modules, so Claude needs no git command
+          # (git diff/log accept --output and could write outside the sheet).
+          mods=$(python3 -c 'import json;print(" ".join(m["module"] for m in json.load(open(".mentor-modules.json"))))')
+          git diff "$(git merge-base "$BASE" HEAD)" HEAD -- $mods > .mentor/pr.diff
+          cp .ci-agents/mentor/MENTOR.md .mentor/MENTOR.md
+      # The action's own Bun setup needs `unzip`, which the runner lacks.
+      - name: Install Bun without unzip
+        if: steps.select.outputs.count != '0'
+        id: bun
+        env:
+          BUN_VERSION: "1.4.4"
+          # From SHASUMS256.txt of the release.
+          BUN_SHA256: "bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c"
+        run: |
+          zip="$RUNNER_TOOL_CACHE/bun/bun-${BUN_VERSION}-linux-x64.zip"
+          mkdir -p "$(dirname "$zip")"
+          if ! echo "$BUN_SHA256  $zip" | sha256sum -c --status - 2>/dev/null; then
+            curl -fsSL -o "$zip" \
+              "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
+            echo "$BUN_SHA256  $zip" | sha256sum -c -
+          fi
+          python3 -m zipfile -e "$zip" "$RUNNER_TEMP/bun"
+          chmod +x "$RUNNER_TEMP/bun/bun-linux-x64/bun"
+          echo "path=$RUNNER_TEMP/bun/bun-linux-x64/bun" >> "$GITHUB_OUTPUT"
+      # Three roles, each in its own session, so the check cannot be skipped:
+      # the author writes, the checker audits, and on critical or major
+      # findings the author fixes once and the checker looks again.
+      - name: Mentor author - writes the sheets
+        id: author
+        if: steps.select.outputs.count != '0'
+        uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          path_to_bun_executable: ${{ steps.bun.outputs.path }}
+          prompt: |
+            Lucrezi ca Mentor pe PR-ul #${{ github.event.pull_request.number }}
+            (bază ${{ github.event.pull_request.base.sha }}). Citește întâi `.mentor/MENTOR.md`
+            și respectă-l întocmai; modulele sunt în `.mentor-modules.json`.
+            Rolul tău: **autorul**. Scrie sau actualizează fișele și `.mentor-report.json`.
+          claude_args: |
+            --model sonnet
+            --max-turns 150
+            --allowedTools "Read(./**),Grep(./**),Glob(./**),Edit(./*/readme/FISA_CONSULTANT.md),Write(./*/readme/FISA_CONSULTANT.md),Edit(./.mentor-report.json),Write(./.mentor-report.json),Bash(ls:*)"
+            --disallowedTools "Read(~/.*),Read(~/.*/**),Read(~/runner-*/.*),Read(//etc/**),Read(//proc/**),Read(//root/**)"
+      - name: Keep the 1-author session output
+        if: always() && steps.author.outcome != 'skipped' && steps.author.outcome != ''
+        run: cp "$RUNNER_TEMP/claude-execution-output.json" "$RUNNER_TEMP/mentor-1-author.json" 2>/dev/null || true
+      - name: Mentor checker - audits the sheets
+        id: check
+        if: steps.select.outputs.count != '0'
+        uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          path_to_bun_executable: ${{ steps.bun.outputs.path }}
+          prompt: |
+            Lucrezi ca Mentor pe PR-ul #${{ github.event.pull_request.number }}
+            (bază ${{ github.event.pull_request.base.sha }}). Citește întâi `.mentor/MENTOR.md`
+            și respectă-l întocmai; modulele sunt în `.mentor-modules.json`.
+            Rolul tău: **verificatorul**. Auditează fișele și scrie `.mentor-verify.json`.
+          claude_args: |
+            --model opus
+            --max-turns 150
+            --allowedTools "Read(./**),Grep(./**),Glob(./**),Edit(./.mentor-verify.json),Write(./.mentor-verify.json),Bash(ls:*)"
+            --disallowedTools "Read(~/.*),Read(~/.*/**),Read(~/runner-*/.*),Read(//etc/**),Read(//proc/**),Read(//root/**)"
+      - name: Keep the 2-check session output
+        if: always() && steps.check.outcome != 'skipped' && steps.check.outcome != ''
+        run: cp "$RUNNER_TEMP/claude-execution-output.json" "$RUNNER_TEMP/mentor-2-check.json" 2>/dev/null || true
+      - name: Critical or major findings?
+        id: findings
+        if: steps.select.outputs.count != '0'
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          try:
+              data = json.load(open(".mentor-verify.json"))
+          except (OSError, ValueError):
+              data = []
+          serious = [f for m in data for f in m.get("findings", []) if f.get("severity") in ("critic", "major")]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"fix={'true' if serious else 'false'}\n")
+          print(f"{len(serious)} constatări critice sau majore")
+          EOF
+      - name: Mentor author - fixes the findings
+        id: fix
+        if: steps.findings.outputs.fix == 'true'
+        uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          path_to_bun_executable: ${{ steps.bun.outputs.path }}
+          prompt: |
+            Lucrezi ca Mentor pe PR-ul #${{ github.event.pull_request.number }}
+            (bază ${{ github.event.pull_request.base.sha }}). Citește întâi `.mentor/MENTOR.md`
+            și respectă-l întocmai; modulele sunt în `.mentor-modules.json`.
+            Rolul tău: **autorul, la corectare**. Corectează constatările din `.mentor-verify.json`.
+          claude_args: |
+            --model sonnet
+            --max-turns 150
+            --allowedTools "Read(./**),Grep(./**),Glob(./**),Edit(./*/readme/FISA_CONSULTANT.md),Write(./*/readme/FISA_CONSULTANT.md),Edit(./.mentor-report.json),Write(./.mentor-report.json),Bash(ls:*)"
+            --disallowedTools "Read(~/.*),Read(~/.*/**),Read(~/runner-*/.*),Read(//etc/**),Read(//proc/**),Read(//root/**)"
+      - name: Keep the 3-fix session output
+        if: always() && steps.fix.outcome != 'skipped' && steps.fix.outcome != ''
+        run: cp "$RUNNER_TEMP/claude-execution-output.json" "$RUNNER_TEMP/mentor-3-fix.json" 2>/dev/null || true
+      - name: Mentor checker - second audit
+        id: recheck
+        if: steps.findings.outputs.fix == 'true'
+        uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          path_to_bun_executable: ${{ steps.bun.outputs.path }}
+          prompt: |
+            Lucrezi ca Mentor pe PR-ul #${{ github.event.pull_request.number }}
+            (bază ${{ github.event.pull_request.base.sha }}). Citește întâi `.mentor/MENTOR.md`
+            și respectă-l întocmai; modulele sunt în `.mentor-modules.json`.
+            Rolul tău: **verificatorul**, a doua oară, după corecturi. Rescrie `.mentor-verify.json`.
+          claude_args: |
+            --model opus
+            --max-turns 150
+            --allowedTools "Read(./**),Grep(./**),Glob(./**),Edit(./.mentor-verify.json),Write(./.mentor-verify.json),Bash(ls:*)"
+            --disallowedTools "Read(~/.*),Read(~/.*/**),Read(~/runner-*/.*),Read(//etc/**),Read(//proc/**),Read(//root/**)"
+      - name: Keep the 4-recheck session output
+        if: always() && steps.recheck.outcome != 'skipped' && steps.recheck.outcome != ''
+        run: cp "$RUNNER_TEMP/claude-execution-output.json" "$RUNNER_TEMP/mentor-4-recheck.json" 2>/dev/null || true
+      - name: Mentor token
+        if: steps.select.outputs.count != '0'
+        id: mentor
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.MENTOR_APP_ID }}
+          private-key: ${{ secrets.MENTOR_APP_PRIVATE_KEY }}
+          owner: terrabit-solutions
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      - name: Commit the sheets to the PR
+        if: steps.select.outputs.count != '0'
+        # Branch name and SHAs through env, never interpolated into the script:
+        # a branch name can carry shell metacharacters.
+        env:
+          MENTOR_TOKEN: ${{ steps.mentor.outputs.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.head_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 -I .ci-agents/mentor/push_commit.py "$REPO" "$BRANCH" "$HEAD_SHA" \
+            .mentor-report.json .mentor-verify.json | tee -a "$GITHUB_STEP_SUMMARY"
+      # The action hides Claude's output: for each session show the tools used,
+      # the refused commands, its final message and the tokens, on the run's
+      # Summary page.
+      - name: Show what each Mentor session did
+        if: always() && steps.select.outputs.count != '0'
+        run: |
+          python3 - "$RUNNER_TEMP" <<'EOF'
+          import glob, json, os, sys
+          out, total = [], 0.0
+          names = {"1-author": "Autorul", "2-check": "Verificatorul", "3-fix": "Autorul, la corectare",
+                   "4-recheck": "Verificatorul, a doua oară"}
+          for path in sorted(glob.glob(os.path.join(sys.argv[1], "mentor-*.json"))):
+              role = os.path.basename(path)[7:-5]
+              try:
+                  data = json.load(open(path))
+              except ValueError:
+                  out.append(f"### {names.get(role, role)}\n\nRezultat ilizibil.\n")
+                  continue
+              data = data if isinstance(data, list) else [data]
+              tools = {}
+              # The execution file can hold plain strings next to the message objects.
+              data = [msg for msg in data if isinstance(msg, dict)]
+              for msg in data:
+                  # "message" and its "content" may be plain strings too.
+                  content = (msg.get("message") or {}).get("content") if isinstance(msg.get("message"), dict) else None
+                  for block in content if isinstance(content, list) else []:
+                      if isinstance(block, dict) and block.get("type") == "tool_use":
+                          tools[block["name"]] = tools.get(block["name"], 0) + 1
+              lines = [f"### {names.get(role, role)}", "",
+                       "Unelte: " + (", ".join(f"{k} ×{v}" for k, v in sorted(tools.items())) or "niciuna")]
+              for msg in data:
+                  if msg.get("type") != "result":
+                      continue
+                  for denial in msg.get("permission_denials") or []:
+                      lines.append(f"- refuzat: {denial.get('tool_name')} {json.dumps(denial.get('tool_input'), ensure_ascii=False)[:200]}")
+                  usage = msg.get("usage") or {}
+                  cost = msg.get("total_cost_usd") or 0
+                  total += cost
+                  fmt = lambda n: f"{n or 0:,}".replace(",", ".")
+                  lines.append(f"Tokeni: {fmt(usage.get('cache_read_input_tokens'))} din cache, "
+                               f"{fmt(usage.get('cache_creation_input_tokens'))} scriși în cache, "
+                               f"{fmt(usage.get('output_tokens'))} ieșire; {msg.get('num_turns', '')} pași, "
+                               f"{(msg.get('duration_ms') or 0) / 1000:.0f} s, " + f"{cost:.3f} $".replace(".", ","))
+                  if msg.get("is_error") or not msg.get("result"):
+                      lines.append(f"Eroare: {msg.get('result') or msg.get('errors') or msg.get('subtype')}")
+                  else:
+                      lines += ["", "> " + msg["result"].strip().replace("\n", "\n> ")]
+              out.append("\n".join(lines) + "\n")
+          out.append(f"**Cost echivalent API, total:** {total:.3f} $".replace(".", ",")
+                     + ". Pe abonament nu se plătește pe rulare: costul arată cât consumă din limita de 5 ore și din cea săptămânală.\n")
+          text = "\n".join(out)
+          print(text)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
+              fh.write(text)
+          EOF
+
+  # Phase 2: the screenshots of the sheets. For the modules the PR changes that
+  # have tests/test_screenshots.py, runs their fise_screenshots tests in the same
+  # container as test.yml and pushes the screenshots that changed visibly as one
+  # Mentor commit. No AI: the screenshots come from the modules' own tests.
+  screenshots:
+    if: >-
+      !github.event.pull_request.draft &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.sender.login != 'mentor-terrabit[bot]' &&
+      !contains(github.event.pull_request.labels.*.name, 'mentor-skip')
+    concurrency:
+      group: mentor-screenshots-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    # actions: read to find the commit whose screenshots were last checked.
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      count: ${{ steps.collect.outputs.count }}
+    runs-on: [self-hosted, linux, odoo]
+    # Up to 10 modules, each installed and rendered by Playwright.
+    timeout-minutes: 120
+    # Same image, cache and database as test.yml (see the comments there).
+    container:
+      image: ghcr.io/oca/oca-ci/py3.10-odoo19.0:latest
+      volumes:
+        - /home/ghrunner/ci-cache:/ci-cache
+    env:
+      CI_CACHE_DIR: /ci-cache
+      PIP_CACHE_DIR: /ci-cache/pip
+    services:
+      postgres:
+        image: ${{ inputs.postgres-image }}
+        env:
+          POSTGRES_USER: odoo
+          POSTGRES_PASSWORD: odoo
+          POSTGRES_DB: odoo
+        options: >-
+          --tmpfs /var/lib/postgresql/data:rw,size=4g
+          --shm-size=512m
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      # Read-only Argus app token: this repository's scripts and l10n_ro_doc_screenshots.
+      - name: Read token
+        id: read
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.ARGUS_APP_ID }}
+          private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
+          owner: terrabit-solutions
+          repositories: ci-agents,l10n_ro_ent
+          permission-contents: read
+      - name: Checkout the Mentor scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: terrabit-solutions/ci-agents
+          ref: ${{ inputs.agents-ref }}
+          token: ${{ steps.read.outputs.token }}
+          path: .ci-agents
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: mentor
+      - name: Modules whose screenshots must follow the PR
+        id: select
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          BRANCH: ${{ github.head_ref }}
+          GH_TOKEN: ${{ github.token }}
+          # The suite's workflow file (this one is called from it): its runs are looked up.
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          git config --global --add safe.directory "$PWD"
+          # Head of the last run whose screenshots (and their commit) succeeded on this PR: what changed
+          # before it was already rendered (even when no screenshot changed visibly and
+          # nothing was committed), so only the commits after it count.
+          CHECKED=$(python3 - <<'PYEOF'
+          import json, os, sys, urllib.parse, urllib.request
+          def get(path):
+              req = urllib.request.Request(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}{path}")
+              req.add_header("Authorization", f"Bearer {os.environ['GH_TOKEN']}")
+              req.add_header("Accept", "application/vnd.github+json")
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  return json.load(resp)
+          try:
+              branch = urllib.parse.quote(os.environ["BRANCH"], safe="")
+              workflow = os.environ["WORKFLOW_REF"].split("@")[0].rsplit("/", 1)[-1]
+              runs = get(f"/actions/workflows/{workflow}/runs?branch={branch}&event=pull_request&per_page=20")
+              for run in runs["workflow_runs"]:
+                  if str(run["id"]) == os.environ["GITHUB_RUN_ID"]:
+                      continue
+                  # Called jobs are named "<caller job> / <job>".
+                  all_jobs = get(f"/actions/runs/{run['id']}/jobs")["jobs"]
+                  jobs = {j["name"].rsplit(" / ", 1)[-1]: j["conclusion"] for j in all_jobs}
+                  partial = any(st["name"] == "More modules left" and st["conclusion"] == "success"
+                                for j in all_jobs if j["name"].rsplit(" / ", 1)[-1] == "screenshots"
+                                for st in j.get("steps") or [])
+                  # Checked only if the screenshots also reached the PR (a failed commit job
+                  # would otherwise lose them for good) and no module was left out.
+                  if jobs.get("screenshots") == "success" and not partial and \
+                          jobs.get("screenshots-commit", "skipped") in ("success", "skipped"):
+                      print(run["head_sha"])
+                      break
+          except Exception as err:  # no history: every change counts
+              print(f"::warning::Last screenshot run not found: {err}", file=sys.stderr)
+          PYEOF
+          )
+          FROM=$(git merge-base "$BASE" "$HEAD")
+          if [ -n "$CHECKED" ] && git merge-base --is-ancestor "$CHECKED" "$HEAD" 2>/dev/null; then
+            echo "Screenshots already checked at $CHECKED"
+            FROM=$CHECKED
+          fi
+          # This repository's script: nothing of the PR runs before the private clones.
+          # At most 10 modules per run. A run that leaves some out ends with the step
+          # "More modules left" and does not count as checked: the next push takes them up.
+          python3 -I ".ci-agents/mentor/select_modules.py" "$FROM" "$HEAD" \
+            mentor-terrabit --limit 10 --screenshots > "$RUNNER_TEMP/shots.json"
+          python3 - "$RUNNER_TEMP/shots.json" <<'PYEOF'
+          import json, os, sys
+          data = json.load(open(sys.argv[1]))
+          json.dump(data["selected"], open(os.path.join(os.environ["RUNNER_TEMP"], "shot-modules.json"), "w"))
+          mods = ",".join(m["module"] for m in data["selected"])
+          left = ",".join(data["skipped"])
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"count={len(data['selected'])}\nmodules={mods}\nleft={left}\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
+              fh.write("## Mentor: capturi\n\n" + (f"Module: `{mods}`" if mods else "Niciun modul cu test de capturi schimbat.")
+                       + (f"\n\nRămase pentru rularea următoare: `{left}`" if left else "") + "\n\n")
+          PYEOF
+      # Same steps as the suite's test.yml: private repos, extra packages, addons and deps.
+      # No code of the PR runs before the private clones: the requirements are read from
+      # the addons' pyproject.toml by whool (manifests parsed, not executed), and a PR that
+      # brings its own build backend is refused. The credential reaches only the step of the
+      # clones, through git's environment config, never the git config of the container;
+      # pip install and the tests come after it.
+      - name: Addon requirements
+        if: steps.select.outputs.count != '0'
+        shell: bash
+        run: |
+          set -ex
+          shopt -s nullglob
+          bad=$( (grep -lE '^\s*backend-path' ${ADDONS_DIR}/*/pyproject.toml || true;
+                  grep -LE '^build-backend = "whool\.buildapi"' ${ADDONS_DIR}/*/pyproject.toml || true) | sort -u)
+          if [ -n "$bad" ]; then
+            echo "::error::Build backend other than whool in: $bad"
+            exit 1
+          fi
+          env WHOOL_POST_VERSION_STRATEGY_OVERRIDE=none \
+              pyproject-dependencies --no-isolation --ignore-build-errors \
+                ${ADDONS_DIR}/*/pyproject.toml >> test-requirements.txt
+      # The suite's private_repos.sh, from its base branch, is the only code with credentials.
+      # It gets the secrets the suites use, as variables, and these helpers:
+      #   auth VAR <secret>   sets VAR to the "AUTHORIZATION: basic ..." header (masked)
+      #   l10n_ro_doc_screenshots   clones that module, with the read-only token
+      # and must run $RUNNER_TEMP/vendor_git_addons.py (the base branch's copy) itself.
+      - name: Private repositories
+        if: steps.select.outputs.count != '0'
+        shell: bash
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+          BITSHOP: ${{ secrets.BITSHOP }}
+          ENTERPRISE_TOKEN: ${{ secrets.ENTERPRISE_TOKEN }}
+          TERRABIT_TOKEN: ${{ secrets.TERRABIT_TOKEN }}
+          L10N_TOKEN: ${{ steps.read.outputs.token }}
+        run: |
+          set -e
+          # A secret may be a bare token or user:token; basic auth needs user:password.
+          auth() {
+            local cred hdr
+            cred=$(printf '%s' "$2" | tr -d '\r\n')
+            case "$cred" in *:*) ;; *) cred="x-access-token:$cred" ;; esac
+            hdr=$(printf '%s' "$cred" | base64 -w0)
+            echo "::add-mask::$hdr"
+            printf -v "$1" 'AUTHORIZATION: basic %s' "$hdr"
+          }
+          l10n_ro_doc_screenshots() {
+            local hdr extra="$RUNNER_TEMP/extra-addons"
+            auth hdr "$L10N_TOKEN"
+            mkdir -p "$extra"
+            # Partial clone: the sparse checkout fetches the blobs, so both commands get the header.
+            if git -c http.https://github.com/.extraheader= -c "http.https://github.com/.extraheader=$hdr" \
+                clone -q --depth 1 --branch 19.0 --filter=blob:none --sparse \
+                https://github.com/terrabit-solutions/l10n_ro_ent.git "$extra/l10n_ro_ent" \
+              && git -c http.https://github.com/.extraheader= -c "http.https://github.com/.extraheader=$hdr" \
+                -C "$extra/l10n_ro_ent" sparse-checkout set l10n_ro_doc_screenshots; then :; else
+              echo "::warning::l10n_ro_ent not readable: tests importing l10n_ro_doc_screenshots will be skipped."
+            fi
+          }
+          git show "$BASE:.github/scripts/vendor_git_addons.py" > "$RUNNER_TEMP/vendor_git_addons.py"
+          if ! git show "$BASE:.github/mentor/private_repos.sh" > "$RUNNER_TEMP/private_repos.sh" 2>/dev/null; then
+            echo "::warning::No private_repos.sh on the base branch yet: using the PR's copy."
+            cp .github/mentor/private_repos.sh "$RUNNER_TEMP/private_repos.sh"
+          fi
+          source "$RUNNER_TEMP/private_repos.sh"
+      - name: Install addons and dependencies
+        if: steps.select.outputs.count != '0'
+        shell: bash
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -ex
+          if ! git show "$BASE:.github/mentor/install.sh" > "$RUNNER_TEMP/install.sh" 2>/dev/null; then
+            echo "::warning::No install.sh on the base branch yet: using the PR's copy."
+            cp .github/mentor/install.sh "$RUNNER_TEMP/install.sh"
+          fi
+          source "$RUNNER_TEMP/install.sh"
+          oca_list_addons_to_test_as_url_reqs >> test-constraints.txt
+          pip install -r test-requirements.txt -c test-constraints.txt
+          echo "addons_path=${ADDONS_PATH},${ADDONS_DIR}" >> ${ODOO_RC}
+          deps=$(oca_list_external_dependencies deb)
+          if [ -n "$deps" ]; then
+              apt-get update -qq
+              DEBIAN_FRONTEND=noninteractive apt-get install -qq --no-install-recommends ${deps}
+          fi
+      # The screenshot tooling: deltatech_doc_screenshots (public) and the old
+      # l10n_ro_doc_screenshots, which many tests still import (a bridge to the
+      # new one), plus Playwright with Chrome.
+      - name: Screenshot tooling
+        if: steps.select.outputs.count != '0'
+        shell: bash
+        run: |
+          set -ex
+          extra="$RUNNER_TEMP/extra-addons"
+          git clone -q --depth 1 --branch 19.0 --filter=blob:none --sparse \
+            https://github.com/dhongu/deltatech.git "$extra/deltatech"
+          git -C "$extra/deltatech" sparse-checkout set deltatech_doc_screenshots
+          paths="$extra/deltatech"
+          # Cloned by private_repos.sh, when the suite needs it.
+          if [ -d "$extra/l10n_ro_ent/l10n_ro_doc_screenshots" ]; then
+            paths="$paths,$extra/l10n_ro_ent"
+          fi
+          sed -i "s|^addons_path=\(.*\)$|addons_path=\1,$paths|" ${ODOO_RC}
+          grep addons_path ${ODOO_RC}
+          # Pillow comes with the image (9.0.1, as Odoo pins it on Python 3.10).
+          pip install playwright websocket-client
+          # ScreenshotCase launches Playwright's "chrome" channel, which looks only at
+          # /opt/google/chrome/chrome. The image's Chrome for Testing lives elsewhere and
+          # crashes (SIGTRAP) when linked there, so the stable Chrome is installed.
+          if [ ! -x /opt/google/chrome/chrome ] || [ -L /opt/google/chrome/chrome ]; then
+            rm -f /opt/google/chrome/chrome
+            playwright install --with-deps chrome
+          fi
+          /opt/google/chrome/chrome --version
+      - name: Initialize test db
+        if: steps.select.outputs.count != '0'
+        env:
+          INCLUDE: ${{ steps.select.outputs.modules }}
+        run: oca_init_test_database
+      # Only the fise_screenshots tests run, so the screenshots count as requested
+      # (ScreenshotCase._screenshots_requested); SKIP_FISE_SCREENSHOTS stays unset.
+      - name: Generate the screenshots
+        if: steps.select.outputs.count != '0'
+        shell: bash
+        env:
+          MODULES: ${{ steps.select.outputs.modules }}
+        run: |
+          set -o pipefail
+          oca_wait_for_postgres
+          # The screenshots show the RO chart of accounts: tests set up with
+          # setup_country("ro") are skipped when l10n_ro is not installed.
+          # --limit-memory-hard 0: Odoo caps its address space (RLIMIT_AS) and the Chrome
+          # that Playwright starts inherits the cap and dies at launch (SIGTRAP); Odoo's
+          # own test browser lifts it, Playwright does not.
+          # The addons a screenshot test imports (a test-only helper module, for instance) are
+          # installed too: test.yml installs the whole suite, this job only the selected modules.
+          EXTRA=$(for m in ${MODULES//,/ }; do grep -ohE "odoo\.addons\.[a-z0-9_]+" "$m/tests/test_screenshots.py" 2>/dev/null; done \
+            | sed 's/^odoo\.addons\.//' | sort -u | paste -sd, -)
+          echo "Also installed for the tests: ${EXTRA:-none}"
+          # Only the selected modules' screenshot tests: an addon installed above has its own.
+          TAGS=$(for m in ${MODULES//,/ }; do printf 'fise_screenshots/%s,' "$m"; done)
+          set +e
+          unbuffer $(which odoo) -d ${PGDATABASE} -i "$MODULES,l10n_ro${EXTRA:+,$EXTRA}" \
+            --test-tags="${TAGS%,}" --http-interface=127.0.0.1 --limit-memory-hard 0 \
+            --stop-after-init > "$RUNNER_TEMP/screenshots.log" 2>&1
+          status=$?
+          set -e
+          grep -E "screenshot|captur|ERROR|FAIL|skipped|Ran " "$RUNNER_TEMP/screenshots.log" || true
+          # Odoo exits non-zero on failed tests; also catch a failing test or class setup
+          # explicitly, not any ERROR line (an install warning logged at ERROR is not one).
+          if [ $status -ne 0 ] || grep -qE "(FAIL|ERROR): (test_|setUpClass)" "$RUNNER_TEMP/screenshots.log"; then
+            tail -n 80 "$RUNNER_TEMP/screenshots.log"
+            echo "::error::Odoo failed while generating the screenshots (exit $status)."
+            exit 1
+          fi
+          git status --short -- $(echo "$MODULES" | tr ',' ' ')
+      # The full Odoo log (the step prints only a filtered view and the last lines).
+      - name: Keep the Odoo log
+        if: failure() && steps.select.outputs.count != '0'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mentor-screenshots-log
+          path: ${{ runner.temp }}/screenshots.log
+          retention-days: 3
+      # The commit is made by the next job: the Mentor token never reaches a machine
+      # state where the PR's code (tests, pip packages) has just run.
+      - name: Collect the screenshots
+        if: steps.select.outputs.count != '0'
+        id: collect
+        run: |
+          python3 - "$RUNNER_TEMP/shot-modules.json" "$RUNNER_TEMP/shots" <<'PYEOF'
+          import json, os, shutil, subprocess, sys
+          modules = {m["module"] for m in json.load(open(sys.argv[1]))}
+          out = sys.argv[2]
+          status = subprocess.run(["git", "status", "--porcelain", "-z", "--untracked-files=all"],
+                                  capture_output=True, text=True, check=True).stdout.split("\0")
+          count = 0
+          for entry in status:
+              path = entry[3:]
+              module, _, rel = path.partition("/")
+              if module in modules and rel.startswith(("static/description/", "readme/screenshots/")) \
+                      and rel.endswith(".png") and not rel.endswith("main_screenshot.png") \
+                      and os.path.isfile(path) and not os.path.islink(path):
+                  os.makedirs(os.path.join(out, "files", os.path.dirname(path)), exist_ok=True)
+                  shutil.copy2(path, os.path.join(out, "files", path))
+                  count += 1
+          os.makedirs(out, exist_ok=True)
+          shutil.copy2(sys.argv[1], os.path.join(out, "modules.json"))
+          print(f"{count} screenshot(s) written")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"count={count}\n")
+          PYEOF
+      - name: Upload the screenshots
+        if: steps.collect.outputs.count > 0
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mentor-screenshots
+          path: ${{ runner.temp }}/shots
+          retention-days: 3
+      # Its name is what the next run looks for: this run then does not count as checked.
+      - name: More modules left
+        if: steps.select.outputs.left != ''
+        env:
+          LEFT: ${{ steps.select.outputs.left }}
+        run: |
+          echo "::warning::Screenshots not regenerated in this run (limit 10): $LEFT. The next push takes them up."
+
+  screenshots-commit:
+    needs: screenshots
+    if: needs.screenshots.outputs.count > 0
+    concurrency:
+      group: mentor-screenshots-commit-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    runs-on: [self-hosted, linux, odoo]
+    timeout-minutes: 10
+    # The OCA image only for Pillow; nothing from the PR runs here.
+    container:
+      image: ghcr.io/oca/oca-ci/py3.10-odoo19.0:latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Read token
+        id: read
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.ARGUS_APP_ID }}
+          private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
+          owner: terrabit-solutions
+          repositories: ci-agents
+          permission-contents: read
+      - name: Checkout the Mentor scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: terrabit-solutions/ci-agents
+          ref: ${{ inputs.agents-ref }}
+          token: ${{ steps.read.outputs.token }}
+          path: .ci-agents
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: mentor
+      # The artifact comes from a job that ran the PR's code: only regular .png files are
+      # taken from it, and the modules allowed are recomputed here.
+      - name: Modules allowed
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git config --global --add safe.directory "$PWD"
+          python3 -I ".ci-agents/mentor/select_modules.py" "$(git merge-base "$BASE" "$HEAD")" "$HEAD" \
+            mentor-terrabit --limit 100 --screenshots \
+            | python3 -c 'import json,sys;json.dump(json.load(sys.stdin)["selected"],sys.stdout)' \
+            > "$RUNNER_TEMP/modules.json"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: mentor-screenshots
+          path: ${{ runner.temp }}/shots
+      - name: Put the screenshots in the checkout
+        run: |
+          cd "$RUNNER_TEMP/shots/files"
+          find . -type f -name '*.png' -exec cp --parents {} "$GITHUB_WORKSPACE" \;
+      - name: Mentor token
+        id: mentor
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.MENTOR_APP_ID }}
+          private-key: ${{ secrets.MENTOR_APP_PRIVATE_KEY }}
+          owner: terrabit-solutions
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      - name: Commit the screenshots to the PR
+        env:
+          MENTOR_TOKEN: ${{ steps.mentor.outputs.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.head_ref }}
+          TESTED: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 -I ".ci-agents/mentor/push_screenshots.py" "$REPO" "$BRANCH" "$RUNNER_TEMP/modules.json" "$TESTED" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
