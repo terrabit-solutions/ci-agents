@@ -12,6 +12,12 @@ on:
         description: Branch or tag of terrabit-solutions/ci-agents for the rules and scripts.
         type: string
         default: main
+      runs-on:
+        description: >-
+          JSON runner labels for the jobs: the org's VPS runners by default, or e.g.
+          '"ubuntu-latest"' for a suite outside the org (its own GitHub-hosted minutes).
+        type: string
+        default: '["self-hosted", "linux", "odoo"]'
 
 jobs:
   review:
@@ -21,13 +27,13 @@ jobs:
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.sender.login != 'mentor-terrabit[bot]'
-    # The org has no GitHub-hosted minutes: same VPS runners as test.yml.
+    # The org has no GitHub-hosted minutes: same VPS runners as test.yml by default.
     # At job level, so a skipped run (Mentor's push) does not cancel the
     # review in progress; a new push by the author does.
     concurrency:
       group: argus-${{ github.event.pull_request.number }}
       cancel-in-progress: true
-    runs-on: [self-hosted, linux, odoo]
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 20
     permissions:
       contents: read
@@ -91,8 +97,8 @@ jobs:
         with:
           app-id: ${{ secrets.ARGUS_APP_ID }}
           private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
-          owner: terrabit-solutions
-          repositories: ${{ github.event.repository.name }},ci-agents
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
           permission-contents: read
           permission-pull-requests: write
       - name: Checkout the shared Argus rules
@@ -100,7 +106,6 @@ jobs:
         with:
           repository: terrabit-solutions/ci-agents
           ref: ${{ inputs.agents-ref }}
-          token: ${{ steps.app.outputs.token }}
           path: .ci-agents
           fetch-depth: 1
           persist-credentials: false

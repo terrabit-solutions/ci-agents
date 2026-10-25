@@ -17,6 +17,12 @@ on:
         description: Branch or tag of terrabit-solutions/ci-agents for the rules and scripts.
         type: string
         default: main
+      runs-on:
+        description: >-
+          JSON runner labels for the jobs: the org's VPS runners by default, or e.g.
+          '"ubuntu-latest"' for a suite outside the org (its own GitHub-hosted minutes).
+        type: string
+        default: '["self-hosted", "linux", "odoo"]'
       postgres-image:
         description: The Postgres image of the suite's test.yml (pgvector where Enterprise `ai` is in).
         type: string
@@ -38,8 +44,8 @@ jobs:
     concurrency:
       group: mentor-${{ github.event.pull_request.number }}
       cancel-in-progress: true
-    # The org has no GitHub-hosted minutes: same VPS runners as test.yml.
-    runs-on: [self-hosted, linux, odoo]
+    # The org has no GitHub-hosted minutes: same VPS runners as test.yml by default.
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -57,14 +63,13 @@ jobs:
           app-id: ${{ secrets.ARGUS_APP_ID }}
           private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
           owner: terrabit-solutions
-          repositories: ci-agents,l10n_ro_ent,terrabit-claude
+          repositories: l10n_ro_ent,terrabit-claude
           permission-contents: read
       - name: Checkout the Mentor rules and scripts
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: terrabit-solutions/ci-agents
           ref: ${{ inputs.agents-ref }}
-          token: ${{ steps.read.outputs.token }}
           path: .ci-agents
           fetch-depth: 1
           persist-credentials: false
@@ -258,7 +263,7 @@ jobs:
         with:
           app-id: ${{ secrets.MENTOR_APP_ID }}
           private-key: ${{ secrets.MENTOR_APP_PRIVATE_KEY }}
-          owner: terrabit-solutions
+          owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
       - name: Commit the sheets to the PR
@@ -348,7 +353,7 @@ jobs:
       actions: read
     outputs:
       count: ${{ steps.collect.outputs.count }}
-    runs-on: [self-hosted, linux, odoo]
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
     # Up to 10 modules, each installed and rendered by Playwright.
     timeout-minutes: 120
     # Same image, cache and database as test.yml (see the comments there).
@@ -375,7 +380,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
-      # Read-only Argus app token: this repository's scripts and l10n_ro_doc_screenshots.
+      # Read-only Argus app token, for l10n_ro_doc_screenshots.
       - name: Read token
         id: read
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -383,14 +388,13 @@ jobs:
           app-id: ${{ secrets.ARGUS_APP_ID }}
           private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
           owner: terrabit-solutions
-          repositories: ci-agents,l10n_ro_ent
+          repositories: l10n_ro_ent
           permission-contents: read
       - name: Checkout the Mentor scripts
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: terrabit-solutions/ci-agents
           ref: ${{ inputs.agents-ref }}
-          token: ${{ steps.read.outputs.token }}
           path: .ci-agents
           fetch-depth: 1
           persist-credentials: false
@@ -527,7 +531,8 @@ jobs:
               return 1
             fi
           }
-          git show "$BASE:.github/scripts/vendor_git_addons.py" > "$RUNNER_TEMP/vendor_git_addons.py"
+          # Only the suites that vendor addons from git have it (and call it themselves).
+          git show "$BASE:.github/scripts/vendor_git_addons.py" > "$RUNNER_TEMP/vendor_git_addons.py" 2>/dev/null || true
           if ! git show "$BASE:.github/mentor/private_repos.sh" > "$RUNNER_TEMP/private_repos.sh" 2>/dev/null; then
             echo "::warning::No private_repos.sh on the base branch yet: using the PR's copy."
             cp .github/mentor/private_repos.sh "$RUNNER_TEMP/private_repos.sh"
@@ -562,15 +567,19 @@ jobs:
         run: |
           set -ex
           extra="$RUNNER_TEMP/extra-addons"
-          git clone -q --depth 1 --branch 19.0 --filter=blob:none --sparse \
-            https://github.com/dhongu/deltatech.git "$extra/deltatech"
-          git -C "$extra/deltatech" sparse-checkout set deltatech_doc_screenshots
-          paths="$extra/deltatech"
+          paths=""
+          # deltatech itself has it in the checkout.
+          if [ ! -d deltatech_doc_screenshots ]; then
+            git clone -q --depth 1 --branch 19.0 --filter=blob:none --sparse \
+              https://github.com/dhongu/deltatech.git "$extra/deltatech"
+            git -C "$extra/deltatech" sparse-checkout set deltatech_doc_screenshots
+            paths=",$extra/deltatech"
+          fi
           # Cloned by private_repos.sh, when the suite needs it.
           if [ -d "$extra/l10n_ro_ent/l10n_ro_doc_screenshots" ]; then
             paths="$paths,$extra/l10n_ro_ent"
           fi
-          sed -i "s|^addons_path=\(.*\)$|addons_path=\1,$paths|" ${ODOO_RC}
+          sed -i "s|^addons_path=\(.*\)$|addons_path=\1$paths|" ${ODOO_RC}
           grep addons_path ${ODOO_RC}
           # Pillow comes with the image (9.0.1, as Odoo pins it on Python 3.10).
           pip install playwright websocket-client
@@ -681,7 +690,7 @@ jobs:
     concurrency:
       group: mentor-screenshots-commit-${{ github.event.pull_request.number }}
       cancel-in-progress: false
-    runs-on: [self-hosted, linux, odoo]
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 10
     # The OCA image only for Pillow; nothing from the PR runs here.
     container:
@@ -692,21 +701,11 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Read token
-        id: read
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          app-id: ${{ secrets.ARGUS_APP_ID }}
-          private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
-          owner: terrabit-solutions
-          repositories: ci-agents
-          permission-contents: read
       - name: Checkout the Mentor scripts
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: terrabit-solutions/ci-agents
           ref: ${{ inputs.agents-ref }}
-          token: ${{ steps.read.outputs.token }}
           path: .ci-agents
           fetch-depth: 1
           persist-credentials: false
@@ -737,7 +736,7 @@ jobs:
         with:
           app-id: ${{ secrets.MENTOR_APP_ID }}
           private-key: ${{ secrets.MENTOR_APP_PRIVATE_KEY }}
-          owner: terrabit-solutions
+          owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
       - name: Commit the screenshots to the PR
