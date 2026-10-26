@@ -24,6 +24,13 @@ on:
           jobs on the "agents" ones and Mentor's screenshots on the "odoo" ones, as the tests.
         type: string
         default: ""
+      odoo-version:
+        description: >-
+          The suite's Odoo series (its base branch), e.g. "20.0": the OCA image of the
+          screenshots job (Python 3.10 for 19.0, 3.12 from 20.0) and the branch of the
+          screenshot tooling and of the RO accounting reference.
+        type: string
+        default: "19.0"
       postgres-image:
         description: The Postgres image of the suite's test.yml (pgvector where Enterprise `ai` is in).
         type: string
@@ -153,7 +160,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: terrabit-solutions/l10n_ro_ent
-          ref: "19.0"
+          ref: ${{ inputs.odoo-version }}
           token: ${{ steps.read.outputs.token }}
           path: odoo-addons/l10n_ro_ent
           fetch-depth: 1
@@ -568,7 +575,7 @@ jobs:
     timeout-minutes: 120
     # Same image, cache and database as test.yml (see the comments there).
     container:
-      image: ghcr.io/oca/oca-ci/py3.10-odoo19.0:latest
+      image: ${{ format('ghcr.io/oca/oca-ci/py{0}-odoo{1}:latest', inputs.odoo-version == '19.0' && '3.10' || '3.12', inputs.odoo-version) }}
       volumes:
         - /home/ghrunner/ci-cache:/ci-cache
     env:
@@ -712,6 +719,7 @@ jobs:
           ENTERPRISE_TOKEN: ${{ secrets.ENTERPRISE_TOKEN }}
           TERRABIT_TOKEN: ${{ secrets.TERRABIT_TOKEN }}
           L10N_TOKEN: ${{ steps.read.outputs.token }}
+          ODOO_VERSION: ${{ inputs.odoo-version }}
         run: |
           set -e
           # A secret may be a bare token or user:token; basic auth needs user:password.
@@ -731,7 +739,7 @@ jobs:
             mkdir -p "$extra"
             # Partial clone: the sparse checkout fetches the blobs, so both commands get the header.
             if git -c http.https://github.com/.extraheader= -c "http.https://github.com/.extraheader=$hdr" \
-                clone -q --depth 1 --branch 19.0 --filter=blob:none --sparse \
+                clone -q --depth 1 --branch "$ODOO_VERSION" --filter=blob:none --sparse \
                 https://github.com/terrabit-solutions/l10n_ro_ent.git "$extra/l10n_ro_ent" \
               && git -c http.https://github.com/.extraheader= -c "http.https://github.com/.extraheader=$hdr" \
                 -C "$extra/l10n_ro_ent" sparse-checkout set l10n_ro_doc_screenshots; then :; else
@@ -774,16 +782,21 @@ jobs:
       - name: Screenshot tooling
         if: steps.select.outputs.count != '0'
         shell: bash
+        env:
+          ODOO_VERSION: ${{ inputs.odoo-version }}
         run: |
           set -ex
           extra="$RUNNER_TEMP/extra-addons"
           paths=""
           # deltatech itself has it in the checkout.
           if [ ! -d deltatech_doc_screenshots ]; then
-            git clone -q --depth 1 --branch 19.0 --filter=blob:none --sparse \
+            git clone -q --depth 1 --branch "$ODOO_VERSION" --filter=blob:none --sparse \
               https://github.com/dhongu/deltatech.git "$extra/deltatech"
             git -C "$extra/deltatech" sparse-checkout set deltatech_doc_screenshots
-            paths=",$extra/deltatech"
+            # Not on every series yet (20.0 has only l10n_ro_doc_screenshots).
+            if [ -d "$extra/deltatech/deltatech_doc_screenshots" ]; then
+              paths=",$extra/deltatech"
+            fi
           fi
           # Cloned by private_repos.sh, when the suite needs it.
           if [ -d "$extra/l10n_ro_ent/l10n_ro_doc_screenshots" ]; then
@@ -791,7 +804,7 @@ jobs:
           fi
           sed -i "s|^addons_path=\(.*\)$|addons_path=\1$paths|" ${ODOO_RC}
           grep addons_path ${ODOO_RC}
-          # Pillow comes with the image (9.0.1, as Odoo pins it on Python 3.10).
+          # Pillow comes with the image (the version Odoo pins for the image's Python).
           pip install playwright websocket-client
           # ScreenshotCase launches Playwright's "chrome" channel, which looks only at
           # /opt/google/chrome/chrome. The image's Chrome for Testing lives elsewhere and
@@ -904,7 +917,7 @@ jobs:
     timeout-minutes: 10
     # The OCA image only for Pillow; nothing from the PR runs here.
     container:
-      image: ghcr.io/oca/oca-ci/py3.10-odoo19.0:latest
+      image: ${{ format('ghcr.io/oca/oca-ci/py{0}-odoo{1}:latest', inputs.odoo-version == '19.0' && '3.10' || '3.12', inputs.odoo-version) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

@@ -20,6 +20,12 @@ on:
           jobs on the "agents" ones and Mentor's screenshots on the "odoo" ones, as the tests.
         type: string
         default: ""
+      odoo-version:
+        description: >-
+          The suite's Odoo series (its base branch), e.g. "20.0": the Odoo core Argus
+          checks the ORM API against, and the rules it applies (REVIEW.md, per version).
+        type: string
+        default: "19.0"
       lint:
         description: >-
           Run tb-odoo-lint on the PR's .py/.xml files first; Argus confirms or rejects
@@ -97,11 +103,11 @@ jobs:
           python3 -m zipfile -e "$zip" "$RUNNER_TEMP/bun"
           chmod +x "$RUNNER_TEMP/bun/bun-linux-x64/bun"
           echo "path=$RUNNER_TEMP/bun/bun-linux-x64/bun" >> "$GITHUB_OUTPUT"
-      - name: Checkout Odoo 19 core (odoo/ only, to check the ORM API)
+      - name: Checkout Odoo core (odoo/ only, to check the ORM API)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: odoo/odoo
-          ref: "19.0"
+          ref: ${{ inputs.odoo-version }}
           path: .odoo-src
           fetch-depth: 1
           # Argus may read the workspace: keep the token out of .git/config.
@@ -224,6 +230,7 @@ jobs:
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
+            ODOO VERSION: ${{ inputs.odoo-version }}
 
             Fă review-ul acestui PR după regulile din .argus/REVIEW.md.
             Citește întâi fișierul acela și respectă-l întocmai.

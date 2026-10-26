@@ -20,6 +20,18 @@ Argus takes `lint: true` (off by default, pilot on bitshop): it first runs `tb-o
 from `dhongu/terrabit-pre-commit-hooks` (fixed commit) on the PR's `.py`/`.xml` files and
 hands the findings to Argus as `.argus/lint.json`, to confirm or reject on the PR's lines.
 
+Argus and Mentor take `odoo-version` (default `"19.0"`), the series of the branch the
+caller lives on: the Odoo core Argus checks the API against (and the version it gives to the
+rules, which have a section per series), the OCA image of Mentor's screenshots job
+(`py3.10-odoo19.0`, `py3.12-odoo20.0`) and the branch the screenshot tooling and the RO
+accounting reference come from. Each branch of a suite has its own callers (`branches:` and
+`odoo-version:` set to that series).
+
+Automerge needs no version, but GitHub fires `workflow_run` only from the workflow file on
+the default branch: the 19.0 caller looks after the PRs to every branch once their workflows
+end. A 20.0 caller only adds the `pull_request: labeled` trigger, which reads the workflow file
+of the PR's base branch.
+
 ## In a suite
 
 ```
@@ -60,4 +72,4 @@ Terrabit token, so only the plumbing is public.
   `ARGUS_APP_*`, `MENTOR_APP_*`, `CLAUDE_CODE_OAUTH_TOKEN`, plus what its
   `private_repos.sh` uses (`BITSHOP`, `ENTERPRISE_TOKEN`, `TERRABIT_TOKEN`).
 - Mentor's screenshot job uses `deltatech_doc_screenshots` from `dhongu/deltatech` (from
-  the checkout, in deltatech itself).
+  the checkout, in deltatech itself) when the series has it (not 20.0 yet).
