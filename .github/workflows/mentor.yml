@@ -722,6 +722,8 @@ jobs:
           ODOO_VERSION: ${{ inputs.odoo-version }}
         run: |
           set -e
+          # The clones below, the suite's included, retry when the runner loses the network.
+          source .ci-agents/mentor/git_retry.sh
           # A secret may be a bare token or user:token; basic auth needs user:password.
           auth() {
             # Underscored locals: a plain `local hdr` would shadow the caller's
@@ -786,6 +788,7 @@ jobs:
           ODOO_VERSION: ${{ inputs.odoo-version }}
         run: |
           set -ex
+          source .ci-agents/mentor/git_retry.sh
           extra="$RUNNER_TEMP/extra-addons"
           paths=""
           # deltatech itself has it in the checkout.
@@ -971,3 +974,34 @@ jobs:
         run: |
           python3 -I ".ci-agents/mentor/push_screenshots.py" "$REPO" "$BRANCH" "$RUNNER_TEMP/modules.json" "$TESTED" \
             | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # Mentor's own pushes skip the jobs above (no loop), so the run on the commit they leave at
+  # the head of the PR came out green even when the run that made it had failed, at the
+  # screenshots for instance. This job carries that run's result onto Mentor's commit.
+  carry:
+    if: >-
+      github.event.action == 'synchronize' &&
+      github.event.sender.login == 'mentor-terrabit[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ${{ fromJSON(inputs.runs-on || '["self-hosted", "linux", "agents"]') }}
+    timeout-minutes: 10
+    steps:
+      - name: Checkout the Mentor scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: terrabit-solutions/ci-agents
+          ref: ${{ inputs.agents-ref }}
+          path: .ci-agents
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: mentor
+      - name: Result of the run that made this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          BRANCH: ${{ github.head_ref }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: python3 -I .ci-agents/mentor/carry_result.py
