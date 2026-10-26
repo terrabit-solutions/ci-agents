@@ -34,10 +34,6 @@ on:
         required: false
       ARGUS_APP_PRIVATE_KEY:
         required: false
-      MENTOR_APP_ID:
-        required: false
-      MENTOR_APP_PRIVATE_KEY:
-        required: false
 
 jobs:
   review:
@@ -211,18 +207,19 @@ jobs:
       # app token trigger workflows). Claude only reports the counts; this step decides, and
       # also counts the [blocant]/[important] comments Argus posted on this head, so a
       # misreported verdict can only hold a draft back. Label "wip" to keep the draft.
-      # GitHub lets an app mark a PR ready only with contents write, which Argus does not
-      # have: the Mentor app does it, with a token made after Claude has finished.
-      - name: Mentor token, to mark the draft ready
+      # GitHub lets an app mark a PR ready only with contents write. Claude's token above
+      # stays read-only; this one is made after Claude has finished, for that one call.
+      - name: Argus token, to mark the draft ready
         id: ready-app
         if: github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'wip')
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.MENTOR_APP_ID }}
-          private-key: ${{ secrets.MENTOR_APP_PRIVATE_KEY }}
+          app-id: ${{ secrets.ARGUS_APP_ID }}
+          private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
+          permission-pull-requests: write
       - name: Ready for review, if the draft is clean
         if: github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'wip')
         env:

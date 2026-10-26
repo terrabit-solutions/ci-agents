@@ -44,7 +44,7 @@ this repository: a PR cannot change how it is reviewed or what Mentor commits.
 - This repository is public, so any suite can call its workflows and check it out
   without a token. It holds no secrets: they stay with the suites.
 - Apps installed on the suite's owner (the organization, or the user account for a suite
-  outside it): Argus Terrabit (read, PR comments) and Mentor Terrabit (contents write).
+  outside it): Argus Terrabit (contents write, PR comments; Claude gets a read-only token, the write one only marks a clean draft ready) and Mentor Terrabit (contents write).
   Argus Terrabit must also stay installed on terrabit-solutions: its token reads
   `l10n_ro_ent` (l10n_ro_doc_screenshots) and `terrabit-claude` for every suite.
 - Secrets visible to the suite (org secrets, or repository secrets outside the org):
