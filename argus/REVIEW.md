@@ -26,6 +26,25 @@ importuri.
 6. Dacă există `.argus/REVIEW.local.md`, citește-l după acest fișier: are
    regulile proprii suitei din acest repo și, unde se contrazic, au prioritate.
 
+## Constatările linterului
+
+Dacă există `.argus/lint.json`, citește-l înainte de diff. Are constatările lui
+`tb-odoo-lint` (API Odoo 19/20 eliminate sau redenumite) pe fișierele `.py` și
+`.xml` din PR: o listă cu `cale`, `linie`, `regula`, `severitate` (`block`,
+`warn`) și `mesaj`. Linterul vede doar tiparul, nu și contextul: pentru fiecare
+constatare decide tu.
+
+- Pe o linie modificată de PR: citește codul din jur și, unde e cazul, sursa din
+  `.odoo-src/`. Dacă problema e reală, comenteaz-o pe linie ca pe orice altă
+  problemă, cu severitatea ta, nu cu a linterului, și pune codul regulii la
+  final, de exemplu `(tb-odoo-lint O19-XML-08)`. Dacă nu e reală, nu comenta pe
+  linie.
+- Pe o linie pe care PR-ul n-a atins-o: nu comenta pe linie, doar o numeri.
+- În rezumat, un rând: „linter: N constatări pe liniile PR-ului, X confirmate,
+  Y respinse; M pe linii neatinse”, apoi pentru fiecare respinsă regula, fișierul
+  și linia, și de ce nu e o problemă. Dacă fișierul e o listă goală sau lipsește,
+  nu pomeni linterul.
+
 ## Ce verifici
 
 ### Odoo 19

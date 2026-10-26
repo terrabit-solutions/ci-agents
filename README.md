@@ -13,6 +13,10 @@ organization. A suite outside the organization (`dhongu/deltatech`) passes
 `runs-on: '"ubuntu-latest"'` and runs them on its own GitHub-hosted minutes.
 It also passes the secrets by name (`secrets: inherit` only works inside the organization).
 
+Argus takes `lint: true` (off by default, pilot on bitshop): it first runs `tb-odoo-lint`
+from `dhongu/terrabit-pre-commit-hooks` (fixed commit) on the PR's `.py`/`.xml` files and
+hands the findings to Argus as `.argus/lint.json`, to confirm or reject on the PR's lines.
+
 ## In a suite
 
 ```
