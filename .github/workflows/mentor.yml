@@ -104,7 +104,11 @@ jobs:
           GH_TOKEN: ${{ steps.label.outputs.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: gh api -X DELETE "repos/$REPO/issues/$PR_NUMBER/labels/mentor-ok" --silent 2>/dev/null || true
+        # curl, not gh: the VPS runners have no gh.
+        run: |
+          curl -fsS -o /dev/null -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/mentor-ok" 2>/dev/null || true
       # Argus Terrabit app (read-only): this repository, the RO accounting reference and the
       # Terrabit plugin with the fisa-modul skill, the verificator-fisa agent and Mentor's rules.
       - name: Read token
@@ -478,7 +482,9 @@ jobs:
               exit 0
             fi
           fi
-          gh api "repos/$REPO/issues/$PR_NUMBER/labels" -f "labels[]=mentor-ok" --silent
+          curl -fsS -o /dev/null -X POST -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" -d '{"labels":["mentor-ok"]}' \
+            "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels"
           echo "Screenshots and sheet clean: mentor-ok."
       # The action hides Claude's output: for each session show the tools used,
       # the refused commands, its final message and the tokens, on the run's
