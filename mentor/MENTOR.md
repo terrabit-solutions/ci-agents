@@ -4,7 +4,9 @@ Mentor lucrează pe un PR care schimbă funcțional unul sau mai multe module (l
 `.mentor-modules.json`) și ține la zi fișa consultant `<modul>/readme/FISA_CONSULTANT.md`, ca ea să
 descrie codul din acest PR. Workflow-ul pornește trei roluri, fiecare într-o sesiune separată:
 **autorul** scrie fișa, **verificatorul** o auditează, iar dacă rămân probleme 🔴/🟠, **autorul** le
-corectează și verificatorul se uită din nou. Promptul îți spune ce rol ai.
+corectează și verificatorul se uită din nou, de cel mult trei ori, ca în skill-ul `fisa-completa`.
+Promptul îți spune ce rol ai. Capturile modulelor cu `tests/test_screenshots.py` sunt deja refăcute
+pe codul din PR, înaintea ta: cele din `readme/screenshots/` sunt cele noi.
 
 ## Unde sunt lucrurile
 
@@ -23,7 +25,8 @@ Pentru fiecare modul, în ordine:
    `.mentor/pr.diff`. Schimbă doar ce s-a schimbat în cod: un câmp, un pas, un
    meniu, o notă contabilă. Nu rescrie fișa de la zero și nu-i schimba stilul.
    **`action: "create"`** — scrie fișa nouă după `.mentor/fisa-modul/SKILL.md`.
-2. **Capturile** nu le poți face aici. Păstrează referințele la cele existente; pentru un ecran nou
+2. **Capturile** nu le poți face aici: le face testul modulului, iar cele schimbate sunt deja în PR.
+   Păstrează referințele la cele existente; pentru un ecran nou
    sau schimbat, folosește convenția de nume din `fisa-modul` și trece numele în raport. Nu lăsa
    `[SCREENSHOT: ...]` în fișă.
 3. Scrie `.mentor-report.json`: o listă cu câte un obiect pe modul,

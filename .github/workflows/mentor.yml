@@ -53,10 +53,15 @@ permissions:
 
 jobs:
   sheet:
+    # After the screenshots, as fisa-completa: the checker audits the sheet against the
+    # screenshots this PR produces, not the old ones. It runs whatever they did (none to
+    # make, failed or skipped); only a cancelled run stops it.
+    needs: [screenshots, screenshots-commit]
     # Not on drafts, forks, Mentor's own pushes or PRs labelled mentor-skip. A draft that
     # Argus moves to Ready carries Argus's app as sender (and actor): the action refuses
     # bots, so each claude-code-action step below lists argus-terrabit in allowed_bots.
     if: >-
+      !cancelled() &&
       !github.event.pull_request.draft &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       (github.event.action != 'synchronize' || github.event.sender.login != 'mentor-terrabit[bot]') &&
@@ -69,14 +74,19 @@ jobs:
     # The org has no GitHub-hosted minutes: its VPS runners, on the "agents" ones kept
     # for the agents, so a review does not wait behind the test shards.
     runs-on: ${{ fromJSON(inputs.runs-on || '["self-hosted", "linux", "agents"]') }}
-    timeout-minutes: 60
+    # Up to three rounds of fixes and checks.
+    timeout-minutes: 120
     steps:
+      # The branch as the screenshots job left it: its Mentor commit included.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.head_ref }}
           fetch-depth: 0
           # Claude may read the workspace: keep the token out of .git/config.
           persist-credentials: false
+      - name: The head this sheet is written for
+        id: head
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       # Argus Terrabit app (read-only): this repository, the RO accounting reference and the
       # Terrabit plugin with the fisa-modul skill and the verificator-fisa agent.
       - name: Read token
@@ -101,7 +111,7 @@ jobs:
         id: select
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
+          HEAD: ${{ steps.head.outputs.sha }}
         run: |
           python3 -I .ci-agents/mentor/select_modules.py "$(git merge-base "$BASE" "$HEAD")" "$HEAD" \
             mentor-terrabit --limit 2 > "$RUNNER_TEMP/selection.json"
@@ -177,9 +187,9 @@ jobs:
           python3 -m zipfile -e "$zip" "$RUNNER_TEMP/bun"
           chmod +x "$RUNNER_TEMP/bun/bun-linux-x64/bun"
           echo "path=$RUNNER_TEMP/bun/bun-linux-x64/bun" >> "$GITHUB_OUTPUT"
-      # Three roles, each in its own session, so the check cannot be skipped:
-      # the author writes, the checker audits, and on critical or major
-      # findings the author fixes once and the checker looks again.
+      # Three roles, each in its own session, so the check cannot be skipped: the author
+      # writes, the checker audits, and on critical or major findings the author fixes and
+      # the checker looks again, up to three rounds, as the fisa-completa skill.
       - name: Mentor author - writes the sheets
         id: author
         if: steps.select.outputs.count != '0'
@@ -224,8 +234,8 @@ jobs:
       - name: Keep the 2-check session output
         if: always() && steps.check.outcome != 'skipped' && steps.check.outcome != ''
         run: cp "$RUNNER_TEMP/claude-execution-output.json" "$RUNNER_TEMP/mentor-2-check.json" 2>/dev/null || true
-      - name: Critical or major findings?
-        id: findings
+      - name: Critical or major findings? (round 1)
+        id: findings1
         if: steps.select.outputs.count != '0'
         run: |
           python3 - <<'EOF'
@@ -239,9 +249,9 @@ jobs:
               fh.write(f"fix={'true' if serious else 'false'}\n")
           print(f"{len(serious)} constatări critice sau majore")
           EOF
-      - name: Mentor author - fixes the findings
-        id: fix
-        if: steps.findings.outputs.fix == 'true'
+      - name: Mentor author - fixes the findings (round 1)
+        id: fix1
+        if: steps.findings1.outputs.fix == 'true'
         uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -252,18 +262,18 @@ jobs:
             Lucrezi ca Mentor pe PR-ul #${{ github.event.pull_request.number }}
             (bază ${{ github.event.pull_request.base.sha }}). Citește întâi `.mentor/MENTOR.md`
             și respectă-l întocmai; modulele sunt în `.mentor-modules.json`.
-            Rolul tău: **autorul, la corectare**. Corectează constatările din `.mentor-verify.json`.
+            Rolul tău: **autorul, la corectare** (tura 1 din 3). Corectează constatările din `.mentor-verify.json`.
           claude_args: |
             --model sonnet
             --max-turns 150
             --allowedTools "Read(./**),Grep(./**),Glob(./**),Edit(./*/readme/FISA_CONSULTANT.md),Write(./*/readme/FISA_CONSULTANT.md),Edit(./.mentor-report.json),Write(./.mentor-report.json),Bash(ls:*)"
             --disallowedTools "Read(~/.*),Read(~/.*/**),Read(~/runner-*/.*),Read(//etc/**),Read(//proc/**),Read(//root/**)"
-      - name: Keep the 3-fix session output
-        if: always() && steps.fix.outcome != 'skipped' && steps.fix.outcome != ''
-        run: cp "$RUNNER_TEMP/claude-execution-output.json" "$RUNNER_TEMP/mentor-3-fix.json" 2>/dev/null || true
-      - name: Mentor checker - second audit
-        id: recheck
-        if: steps.findings.outputs.fix == 'true'
+      - name: Keep the round 1 fix session output
+        if: always() && steps.fix1.outcome != 'skipped' && steps.fix1.outcome != ''
+        run: cp "$RUNNER_TEMP/claude-execution-output.json" "$RUNNER_TEMP/mentor-3-fix1.json" 2>/dev/null || true
+      - name: Mentor checker - audits again (round 1)
+        id: recheck1
+        if: steps.findings1.outputs.fix == 'true'
         uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -274,15 +284,133 @@ jobs:
             Lucrezi ca Mentor pe PR-ul #${{ github.event.pull_request.number }}
             (bază ${{ github.event.pull_request.base.sha }}). Citește întâi `.mentor/MENTOR.md`
             și respectă-l întocmai; modulele sunt în `.mentor-modules.json`.
-            Rolul tău: **verificatorul**, a doua oară, după corecturi. Rescrie `.mentor-verify.json`.
+            Rolul tău: **verificatorul**, din nou, după corecturile din tura 1 din 3. Rescrie `.mentor-verify.json`.
           claude_args: |
             --model opus
             --max-turns 150
             --allowedTools "Read(./**),Grep(./**),Glob(./**),Edit(./.mentor-verify.json),Write(./.mentor-verify.json),Bash(ls:*)"
             --disallowedTools "Read(~/.*),Read(~/.*/**),Read(~/runner-*/.*),Read(//etc/**),Read(//proc/**),Read(//root/**)"
-      - name: Keep the 4-recheck session output
-        if: always() && steps.recheck.outcome != 'skipped' && steps.recheck.outcome != ''
-        run: cp "$RUNNER_TEMP/claude-execution-output.json" "$RUNNER_TEMP/mentor-4-recheck.json" 2>/dev/null || true
+      - name: Keep the round 1 check session output
+        if: always() && steps.recheck1.outcome != 'skipped' && steps.recheck1.outcome != ''
+        run: cp "$RUNNER_TEMP/claude-execution-output.json" "$RUNNER_TEMP/mentor-4-recheck1.json" 2>/dev/null || true
+      - name: Critical or major findings? (round 2)
+        id: findings2
+        if: steps.findings1.outputs.fix == 'true'
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          try:
+              data = json.load(open(".mentor-verify.json"))
+          except (OSError, ValueError):
+              data = []
+          serious = [f for m in data for f in m.get("findings", []) if f.get("severity") in ("critic", "major")]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"fix={'true' if serious else 'false'}\n")
+          print(f"{len(serious)} constatări critice sau majore")
+          EOF
+      - name: Mentor author - fixes the findings (round 2)
+        id: fix2
+        if: steps.findings2.outputs.fix == 'true'
+        uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          path_to_bun_executable: ${{ steps.bun.outputs.path }}
+          allowed_bots: argus-terrabit
+          prompt: |
+            Lucrezi ca Mentor pe PR-ul #${{ github.event.pull_request.number }}
+            (bază ${{ github.event.pull_request.base.sha }}). Citește întâi `.mentor/MENTOR.md`
+            și respectă-l întocmai; modulele sunt în `.mentor-modules.json`.
+            Rolul tău: **autorul, la corectare** (tura 2 din 3). Corectează constatările din `.mentor-verify.json`.
+          claude_args: |
+            --model sonnet
+            --max-turns 150
+            --allowedTools "Read(./**),Grep(./**),Glob(./**),Edit(./*/readme/FISA_CONSULTANT.md),Write(./*/readme/FISA_CONSULTANT.md),Edit(./.mentor-report.json),Write(./.mentor-report.json),Bash(ls:*)"
+            --disallowedTools "Read(~/.*),Read(~/.*/**),Read(~/runner-*/.*),Read(//etc/**),Read(//proc/**),Read(//root/**)"
+      - name: Keep the round 2 fix session output
+        if: always() && steps.fix2.outcome != 'skipped' && steps.fix2.outcome != ''
+        run: cp "$RUNNER_TEMP/claude-execution-output.json" "$RUNNER_TEMP/mentor-5-fix2.json" 2>/dev/null || true
+      - name: Mentor checker - audits again (round 2)
+        id: recheck2
+        if: steps.findings2.outputs.fix == 'true'
+        uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          path_to_bun_executable: ${{ steps.bun.outputs.path }}
+          allowed_bots: argus-terrabit
+          prompt: |
+            Lucrezi ca Mentor pe PR-ul #${{ github.event.pull_request.number }}
+            (bază ${{ github.event.pull_request.base.sha }}). Citește întâi `.mentor/MENTOR.md`
+            și respectă-l întocmai; modulele sunt în `.mentor-modules.json`.
+            Rolul tău: **verificatorul**, din nou, după corecturile din tura 2 din 3. Rescrie `.mentor-verify.json`.
+          claude_args: |
+            --model opus
+            --max-turns 150
+            --allowedTools "Read(./**),Grep(./**),Glob(./**),Edit(./.mentor-verify.json),Write(./.mentor-verify.json),Bash(ls:*)"
+            --disallowedTools "Read(~/.*),Read(~/.*/**),Read(~/runner-*/.*),Read(//etc/**),Read(//proc/**),Read(//root/**)"
+      - name: Keep the round 2 check session output
+        if: always() && steps.recheck2.outcome != 'skipped' && steps.recheck2.outcome != ''
+        run: cp "$RUNNER_TEMP/claude-execution-output.json" "$RUNNER_TEMP/mentor-6-recheck2.json" 2>/dev/null || true
+      - name: Critical or major findings? (round 3)
+        id: findings3
+        if: steps.findings2.outputs.fix == 'true'
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          try:
+              data = json.load(open(".mentor-verify.json"))
+          except (OSError, ValueError):
+              data = []
+          serious = [f for m in data for f in m.get("findings", []) if f.get("severity") in ("critic", "major")]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"fix={'true' if serious else 'false'}\n")
+          print(f"{len(serious)} constatări critice sau majore")
+          EOF
+      - name: Mentor author - fixes the findings (round 3)
+        id: fix3
+        if: steps.findings3.outputs.fix == 'true'
+        uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          path_to_bun_executable: ${{ steps.bun.outputs.path }}
+          allowed_bots: argus-terrabit
+          prompt: |
+            Lucrezi ca Mentor pe PR-ul #${{ github.event.pull_request.number }}
+            (bază ${{ github.event.pull_request.base.sha }}). Citește întâi `.mentor/MENTOR.md`
+            și respectă-l întocmai; modulele sunt în `.mentor-modules.json`.
+            Rolul tău: **autorul, la corectare** (tura 3 din 3). Corectează constatările din `.mentor-verify.json`.
+          claude_args: |
+            --model sonnet
+            --max-turns 150
+            --allowedTools "Read(./**),Grep(./**),Glob(./**),Edit(./*/readme/FISA_CONSULTANT.md),Write(./*/readme/FISA_CONSULTANT.md),Edit(./.mentor-report.json),Write(./.mentor-report.json),Bash(ls:*)"
+            --disallowedTools "Read(~/.*),Read(~/.*/**),Read(~/runner-*/.*),Read(//etc/**),Read(//proc/**),Read(//root/**)"
+      - name: Keep the round 3 fix session output
+        if: always() && steps.fix3.outcome != 'skipped' && steps.fix3.outcome != ''
+        run: cp "$RUNNER_TEMP/claude-execution-output.json" "$RUNNER_TEMP/mentor-7-fix3.json" 2>/dev/null || true
+      - name: Mentor checker - audits again (round 3)
+        id: recheck3
+        if: steps.findings3.outputs.fix == 'true'
+        uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          path_to_bun_executable: ${{ steps.bun.outputs.path }}
+          allowed_bots: argus-terrabit
+          prompt: |
+            Lucrezi ca Mentor pe PR-ul #${{ github.event.pull_request.number }}
+            (bază ${{ github.event.pull_request.base.sha }}). Citește întâi `.mentor/MENTOR.md`
+            și respectă-l întocmai; modulele sunt în `.mentor-modules.json`.
+            Rolul tău: **verificatorul**, din nou, după corecturile din tura 3 din 3. Rescrie `.mentor-verify.json`.
+          claude_args: |
+            --model opus
+            --max-turns 150
+            --allowedTools "Read(./**),Grep(./**),Glob(./**),Edit(./.mentor-verify.json),Write(./.mentor-verify.json),Bash(ls:*)"
+            --disallowedTools "Read(~/.*),Read(~/.*/**),Read(~/runner-*/.*),Read(//etc/**),Read(//proc/**),Read(//root/**)"
+      - name: Keep the round 3 check session output
+        if: always() && steps.recheck3.outcome != 'skipped' && steps.recheck3.outcome != ''
+        run: cp "$RUNNER_TEMP/claude-execution-output.json" "$RUNNER_TEMP/mentor-8-recheck3.json" 2>/dev/null || true
       - name: Mentor token
         if: steps.select.outputs.count != '0'
         id: mentor
@@ -301,7 +429,7 @@ jobs:
           MENTOR_TOKEN: ${{ steps.mentor.outputs.token }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.head_ref }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_SHA: ${{ steps.head.outputs.sha }}
         run: |
           python3 -I .ci-agents/mentor/push_commit.py "$REPO" "$BRANCH" "$HEAD_SHA" \
             .mentor-report.json .mentor-verify.json | tee -a "$GITHUB_STEP_SUMMARY"
@@ -314,8 +442,10 @@ jobs:
           python3 - "$RUNNER_TEMP" <<'EOF'
           import glob, json, os, sys
           out, total = [], 0.0
-          names = {"1-author": "Autorul", "2-check": "Verificatorul", "3-fix": "Autorul, la corectare",
-                   "4-recheck": "Verificatorul, a doua oară"}
+          names = {"1-author": "Autorul", "2-check": "Verificatorul"}
+          for n in (1, 2, 3):
+              names[f"{1 + 2 * n}-fix{n}"] = f"Autorul, la corectare (tura {n})"
+              names[f"{2 + 2 * n}-recheck{n}"] = f"Verificatorul, după tura {n}"
           for path in sorted(glob.glob(os.path.join(sys.argv[1], "mentor-*.json"))):
               role = os.path.basename(path)[7:-5]
               try:

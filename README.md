@@ -6,7 +6,7 @@ made once and reaches every suite.
 | Agent | What it does | Workflow |
 |---|---|---|
 | Argus | Advisory AI review of every PR, drafts included; never blocks the merge. A draft with no blocking or important issue goes to Ready by itself (label `wip` keeps it a draft) | `.github/workflows/argus.yml` |
-| Mentor | Writes or updates the consultant sheet of the modules a PR changes, has it audited, regenerates their screenshots; all as commits on the PR | `.github/workflows/mentor.yml` |
+| Mentor | Regenerates the screenshots of the modules a PR changes, then writes or updates their consultant sheet and has it audited against them, up to three rounds of fixes (as the fisa-completa skill); all as commits on the PR | `.github/workflows/mentor.yml` |
 
 Both are reusable workflows (`workflow_call`), run on the self-hosted runners of the
 organization: the light jobs (Argus, Mentor's sheet, the screenshots commit) on the ones
