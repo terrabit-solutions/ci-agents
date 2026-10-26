@@ -206,7 +206,8 @@ jobs:
       # A clean draft goes to Ready, which starts the tests and Mentor (events made with an
       # app token trigger workflows). Claude only reports the counts; this step decides, and
       # also counts the [blocant]/[important] comments Argus posted on this head, so a
-      # misreported verdict can only hold a draft back. Label "wip" to keep the draft.
+      # misreported verdict can only hold a draft back. Label "wip" (any case, as contains()
+      # in the condition) to keep the draft.
       # GitHub lets an app mark a PR ready only with contents write. Claude's token above
       # stays read-only; this one is made after Claude has finished, for that one call.
       - name: Argus token, to mark the draft ready
@@ -242,7 +243,7 @@ jobs:
           fi
           # The PR as it is now: still a draft, same head, no wip label added meanwhile.
           state=$(gh api "repos/$REPO/pulls/$PR_NUMBER" \
-            --jq '"\(.draft) \(.head.sha) \(any(.labels[]; .name == "wip"))"')
+            --jq '"\(.draft) \(.head.sha) \(any(.labels[]; .name | ascii_downcase == "wip"))"')
           if [ "$state" != "true $HEAD_SHA false" ]; then
             echo "The PR changed during the review ($state): left as it is."
             exit 0
