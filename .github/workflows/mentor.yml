@@ -54,7 +54,8 @@ permissions:
 jobs:
   sheet:
     # Not on drafts, forks, Mentor's own pushes or PRs labelled mentor-skip. A draft that
-    # Argus moves to Ready carries Mentor's app as sender too: only its pushes are skipped.
+    # Argus moves to Ready carries Argus's app as sender (and actor): the action refuses
+    # bots, so each claude-code-action step below lists argus-terrabit in allowed_bots.
     if: >-
       !github.event.pull_request.draft &&
       github.event.pull_request.head.repo.full_name == github.repository &&
@@ -187,6 +188,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           path_to_bun_executable: ${{ steps.bun.outputs.path }}
+          allowed_bots: argus-terrabit
           prompt: |
             Lucrezi ca Mentor pe PR-ul #${{ github.event.pull_request.number }}
             (bază ${{ github.event.pull_request.base.sha }}). Citește întâi `.mentor/MENTOR.md`
@@ -208,6 +210,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           path_to_bun_executable: ${{ steps.bun.outputs.path }}
+          allowed_bots: argus-terrabit
           prompt: |
             Lucrezi ca Mentor pe PR-ul #${{ github.event.pull_request.number }}
             (bază ${{ github.event.pull_request.base.sha }}). Citește întâi `.mentor/MENTOR.md`
@@ -244,6 +247,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           path_to_bun_executable: ${{ steps.bun.outputs.path }}
+          allowed_bots: argus-terrabit
           prompt: |
             Lucrezi ca Mentor pe PR-ul #${{ github.event.pull_request.number }}
             (bază ${{ github.event.pull_request.base.sha }}). Citește întâi `.mentor/MENTOR.md`
@@ -265,6 +269,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           path_to_bun_executable: ${{ steps.bun.outputs.path }}
+          allowed_bots: argus-terrabit
           prompt: |
             Lucrezi ca Mentor pe PR-ul #${{ github.event.pull_request.number }}
             (bază ${{ github.event.pull_request.base.sha }}). Citește întâi `.mentor/MENTOR.md`
