@@ -2,14 +2,15 @@ name: argus
 
 # Argus, the advisory AI review of a suite's pull requests: it comments, it never blocks the
 # merge, and it moves a clean draft to Ready (label "wip" to keep it a draft). Called by .github/workflows/argus.yml of each suite (which sets the triggers). The
-# rules (argus/REVIEW.md) and the scripts come from this repository, plus the suite's own
-# .github/argus/REVIEW.local.md from its base branch, so a PR cannot change how it is reviewed.
+# scripts come from this repository, the rules (ci-agents/argus/REVIEW.md) from the private
+# terrabit-solutions/terrabit-claude, plus the suite's own .github/argus/REVIEW.local.md from
+# its base branch, so a PR cannot change how it is reviewed.
 
 on:
   workflow_call:
     inputs:
       agents-ref:
-        description: Branch or tag of terrabit-solutions/ci-agents for the rules and scripts.
+        description: Branch or tag of terrabit-solutions/ci-agents for the scripts (the rules follow terrabit-claude main).
         type: string
         default: main
       runs-on:
@@ -118,7 +119,7 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: read
           permission-pull-requests: write
-      - name: Checkout the shared Argus rules
+      - name: Checkout the shared Argus scripts
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: terrabit-solutions/ci-agents
@@ -127,6 +128,27 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
           sparse-checkout: argus
+      # The rules stay private, in terrabit-claude: the same app, installed on the organization,
+      # reads them for every suite, also one outside the organization.
+      - name: Rules token
+        id: rules
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.ARGUS_APP_ID }}
+          private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
+          owner: terrabit-solutions
+          repositories: terrabit-claude
+          permission-contents: read
+      - name: Checkout the shared Argus rules
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: terrabit-solutions/terrabit-claude
+          ref: main
+          token: ${{ steps.rules.outputs.token }}
+          path: .argus-rules
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: ci-agents/argus
       # The suite's own rules, from its base branch: the PR cannot change them.
       - name: Checkout the suite's rules from the base branch
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -142,10 +164,11 @@ jobs:
           rm -f "$RUNNER_TEMP/argus-verdict"
           rm -rf .argus
           cp -r .ci-agents/argus .argus
+          cp .argus-rules/ci-agents/argus/REVIEW.md .argus/REVIEW.md
           if [ -f .argus-base/.github/argus/REVIEW.local.md ]; then
             cp .argus-base/.github/argus/REVIEW.local.md .argus/REVIEW.local.md
           fi
-          rm -rf .argus-base .ci-agents
+          rm -rf .argus-base .argus-rules .ci-agents
           chmod +x .argus/*.sh
       # tb-odoo-lint (Python stdlib only) at a fixed commit, v1.5.0.
       - name: Checkout tb-odoo-lint

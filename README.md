@@ -24,29 +24,36 @@ hands the findings to Argus as `.argus/lint.json`, to confirm or reject on the P
 ```
 .github/workflows/argus.yml      calls ci-agents/.github/workflows/argus.yml@main
 .github/workflows/mentor.yml     calls ci-agents/.github/workflows/mentor.yml@main
-.github/argus/REVIEW.local.md    optional: the suite's own review rules, read after argus/REVIEW.md
+.github/argus/REVIEW.local.md    optional: the suite's own review rules, read after the shared rules
 .github/mentor/private_repos.sh  the private clones of its test.yml (the only code with credentials)
 .github/mentor/install.sh        what its test.yml installs before `pip install -r`
 ```
 
-The suite's scripts and REVIEW.local.md are read from the PR's base branch, the rest from
-this repository: a PR cannot change how it is reviewed or what Mentor commits.
+The suite's scripts and REVIEW.local.md are read from the PR's base branch, the shared rules
+from `terrabit-claude` main and the rest from this repository: a PR cannot change how it is
+reviewed or what Mentor commits.
 
 ## Here
 
-- `argus/`: `REVIEW.md` (the rules), `comment.sh` and `needs-pacioli.sh` (the only writes
-  Argus may make), `verdict.sh` (the counts; a workflow step, not Argus, moves the draft)
-- `mentor/`: `MENTOR.md` (the rules), `select_modules.py`, `push_commit.py`,
-  `push_screenshots.py`
+- `argus/`: `comment.sh` and `needs-pacioli.sh` (the only writes Argus may make),
+  `verdict.sh` (the counts; a workflow step, not Argus, moves the draft)
+- `mentor/`: `select_modules.py`, `push_commit.py`, `push_screenshots.py`
+
+The rules themselves (Argus's `REVIEW.md`, Mentor's `MENTOR.md`) are not here: they live in
+`ci-agents/` of the private `terrabit-solutions/terrabit-claude` and are read with the Argus
+Terrabit token, so only the plumbing is public.
 
 ## Requirements
 
 - This repository is public, so any suite can call its workflows and check it out
-  without a token. It holds no secrets: they stay with the suites.
+  without a token, including the public `dhongu/deltatech` (a public repository cannot call
+  a private one's workflows). It holds no secrets and no rules: they stay with the suites
+  and in `terrabit-claude`.
 - Apps installed on the suite's owner (the organization, or the user account for a suite
   outside it): Argus Terrabit (contents write, PR comments; Claude gets a read-only token, the write one only marks a clean draft ready) and Mentor Terrabit (contents write).
   Argus Terrabit must also stay installed on terrabit-solutions: its token reads
-  `l10n_ro_ent` (l10n_ro_doc_screenshots) and `terrabit-claude` for every suite.
+  `l10n_ro_ent` (l10n_ro_doc_screenshots) and `terrabit-claude` (the rules, the fisa-modul skill) for
+  every suite.
 - Secrets visible to the suite (org secrets, or repository secrets outside the org):
   `ARGUS_APP_*`, `MENTOR_APP_*`, `CLAUDE_CODE_OAUTH_TOKEN`, plus what its
   `private_repos.sh` uses (`BITSHOP`, `ENTERPRISE_TOKEN`, `TERRABIT_TOKEN`).
