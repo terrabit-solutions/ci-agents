@@ -11,6 +11,8 @@ arăta altfel, după ultimul commit în care Mentor le-a pus capturile: un XML d
 wizard-uri, șabloane OWL din `static/src/`), testul de capturi schimbat (ecrane noi), sau fișa cu
 pași noi, adică trimiteri la capturi care nu erau în ramura de bază ori lipsesc din modul. Celelalte
 schimbări (modele, date, securitate, manifest, readme) nu refac capturile. Fără AI: le face testul.
+Capturile se fac după fișă, ca în skill-ul fisa-completa: o fișă scrisă de Mentor contează și ea,
+dar numai pentru capturile la care trimite și care lipsesc din modul.
 
 Folosire (din rădăcina repo-ului suitei):
     python3 mentor/select_modules.py <base_sha> <head_sha> <bot_login> [--limit 2] [--screenshots]
@@ -65,6 +67,15 @@ def new_steps(base: str, module: str) -> list[str]:
     return sorted((head_refs - base_refs) | (head_refs - present))
 
 
+def missing_shots(module: str) -> list[str]:
+    """Screenshots the sheet refers to that are not in the module."""
+    path = Path(module, FISA)
+    if not path.is_file():
+        return []
+    present = {p.name for d in SHOTS for p in Path(module, d).glob("*.png")}
+    return sorted(shot_refs(path.read_text(encoding="utf-8")) - present)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("base")
@@ -78,6 +89,8 @@ def main() -> None:
     log = git("log", "--reverse", "--format=@@%H%x09%an", "--name-only", f"{args.base}..{args.head}")
     last_change: dict[str, int] = {}
     last_fisa_by_bot: dict[str, int] = {}
+    # --screenshots: the sheets Mentor wrote, which may call for screenshots not made yet.
+    sheet_by_bot: dict[str, int] = {}
     order = 0
     author = ""
     for line in log.splitlines():
@@ -96,6 +109,8 @@ def main() -> None:
             last_fisa_by_bot[module] = order
         elif counts and args.bot not in author:
             last_change[module] = order
+        elif args.screenshots and rel == FISA:
+            sheet_by_bot[module] = order
 
     selected = []
     for module, changed_at in sorted(last_change.items(), key=lambda kv: -kv[1]):
@@ -120,6 +135,17 @@ def main() -> None:
             "action": "update" if exists else "create",
             "reason": "cod schimbat în PR" if exists else "modul fără fișă, schimbat în PR",
         })
+    if args.screenshots:
+        chosen = {m["module"] for m in selected}
+        for module, written_at in sorted(sheet_by_bot.items(), key=lambda kv: -kv[1]):
+            if module in chosen or last_fisa_by_bot.get(module, 0) > written_at:
+                continue
+            if not Path(module, SHOT_TEST).is_file():
+                continue
+            missing = missing_shots(module)
+            if missing:
+                selected.append({"module": module, "action": "screenshots",
+                                 "reason": "capturi lipsă din fișa scrisă de Mentor: " + ", ".join(missing)})
     print(json.dumps({"selected": selected[: args.limit], "skipped": [m["module"] for m in selected[args.limit:]]},
                      ensure_ascii=False))
 

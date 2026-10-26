@@ -2,12 +2,16 @@
 """Pune fișele scrise de Mentor ca un singur commit pe ramura PR-ului, prin API-ul GitHub.
 
 Commit-ul e semnat de aplicația Mentor Terrabit (tokenul ei, în MENTOR_TOKEN). Ramura
-doar avansează. Peste commit-urile Mentor apărute între timp (capturile, din jobul
-paralel; alte căi) se pune deasupra, cu reîncercare dacă ramura se mișcă; dacă
-programatorul a împins între timp, fișa nu se pune: rularea push-ului nou o reface.
+doar avansează. Peste commit-urile Mentor apărute între timp se pune deasupra, cu
+reîncercare dacă ramura se mișcă; dacă programatorul a împins între timp, fișa nu se
+pune: rularea push-ului nou o reface.
+
+Două momente, ca în skill-ul fisa-completa: jobul sheet pune fișa scrisă de autor, înainte
+de capturi (verificarea `-`: urmează), iar sheet-check pune corecturile de după verificare.
+Capul ramurii după commit (sau cel primit, fără commit) merge în GITHUB_OUTPUT ca `head`.
 
 Folosire (din rădăcina repo-ului suitei):
-    python3 push_commit.py <owner/repo> <ramura> <head_sha> <raport.json> <verificare.json>
+    python3 push_commit.py <owner/repo> <ramura> <head_sha> <raport.json> <verificare.json | ->
 """
 from __future__ import annotations
 
@@ -50,8 +54,16 @@ def only_mentor_since(repo: str, tested: str, current: str) -> bool:
     return cmp["status"] == "ahead" and all((c.get("author") or {}).get("login") == BOT for c in cmp["commits"])
 
 
+def set_head(sha: str) -> None:
+    """The branch head the next job works on (the screenshots, after the sheet job)."""
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+            fh.write(f"head={sha}\n")
+
+
 def main() -> None:
     repo, branch, head, report_path, verify_path = sys.argv[1:6]
+    checked = verify_path != "-"
     changed = subprocess.run(
         ["git", "status", "--porcelain", "--untracked-files=all", "--", "*/readme/FISA_CONSULTANT.md"],
         capture_output=True, text=True, check=True,
@@ -60,7 +72,8 @@ def main() -> None:
     selected = {m["module"] for m in json.load(open(".mentor-modules.json", encoding="utf-8"))}
     files = [line[3:] for line in changed if line[3:].split("/", 1)[0] in selected]
     if not files:
-        print("Mentor n-a schimbat nicio fișă.")
+        print("Mentor n-a corectat nicio fișă." if checked else "Mentor n-a schimbat nicio fișă.")
+        set_head(head)
         return
     def load(path: str) -> list:
         try:
@@ -69,18 +82,22 @@ def main() -> None:
             return []
 
     report = {r.get("module"): r for r in load(report_path)}
-    verify = {v.get("module"): v for v in load(verify_path)}
+    verify = {v.get("module"): v for v in load(verify_path)} if checked else {}
 
     tree = [{"path": f, "mode": "100644", "type": "blob",
              "content": open(f, encoding="utf-8").read()} for f in files]
 
     modules = [f.split("/", 1)[0] for f in files]
-    lines = [f"[DOC] {', '.join(modules)}: fișa consultant (Mentor)", ""]
+    title = "fișa consultant corectată după verificare" if checked else "fișa consultant"
+    lines = [f"[DOC] {', '.join(modules)}: {title} (Mentor)", ""]
     for module in modules:
         r, v = report.get(module, {}), verify.get(module)
-        status = "făcută" if r.get("action") == "create" else "actualizată"
-        verdict = v.get("verdict", "?") if v else "NEVERIFICATĂ (verificatorul n-a raportat)"
-        lines.append(f"- {module}: fișă {status}; verificare: {verdict}")
+        if not checked:
+            status = "făcută" if r.get("action") == "create" else "actualizată"
+            lines.append(f"- {module}: fișă {status}; verificarea urmează, după capturi")
+        else:
+            verdict = v.get("verdict", "?") if v else "NEVERIFICATĂ (verificatorul n-a raportat)"
+            lines.append(f"- {module}: fișă corectată; verificare: {verdict}")
         for f in (v or {}).get("findings", []):
             if f.get("severity") in ("critic", "major"):
                 lines.append(f"  - rămas deschis ({f['severity']}): {f.get('text', '')}")
@@ -106,6 +123,7 @@ def main() -> None:
                 time.sleep(5)
             continue
         print(f"Commit {commit['sha'][:9]} on {branch}: {', '.join(files)}")
+        set_head(commit["sha"])
         return
     sys.exit("Could not commit the sheet after 3 attempts.")
 

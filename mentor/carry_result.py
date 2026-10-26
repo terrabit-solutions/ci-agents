@@ -5,7 +5,7 @@ Push-urile Mentor (fișa, capturile) nu reiau joburile Mentor, ca să nu intre �
 rularea de pe commit-ul lor ar ieși verde (sărită) chiar dacă rularea care le-a făcut a picat,
 de exemplu la capturi. Scriptul coboară din capul PR-ului peste commit-urile Mentor până la
 commit-ul programatorului, găsește rularea Mentor de pe el și pică dacă acolo au picat
-capturile, commit-ul lor sau fișa.
+fișa, capturile, commit-ul lor sau verificarea fișei.
 
 Folosire (în jobul carry din mentor.yml; GH_TOKEN, HEAD, BRANCH, WORKFLOW_REF din env):
     python3 -I carry_result.py
@@ -20,9 +20,9 @@ import urllib.request
 
 API = "https://api.github.com"
 BOT = "mentor-terrabit[bot]"
-# The jobs whose failure the PR must show; the sheet only once it is done (it pushes before
-# its last steps, so it may still run when this job starts).
-JOBS = ("screenshots", "screenshots-commit", "sheet")
+# The jobs whose failure the PR must show, in their order (sheet, screenshots, check); one still
+# running when this job starts counts as passed (each pushes before its last steps).
+JOBS = ("sheet", "screenshots", "screenshots-commit", "sheet-check")
 OK = ("success", "skipped", None)
 
 
