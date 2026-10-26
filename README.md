@@ -9,7 +9,9 @@ made once and reaches every suite.
 | Mentor | Writes or updates the consultant sheet of the modules a PR changes, has it audited, regenerates their screenshots; all as commits on the PR | `.github/workflows/mentor.yml` |
 
 Both are reusable workflows (`workflow_call`), run on the self-hosted runners of the
-organization. A suite outside the organization (`dhongu/deltatech`) passes
+organization: the light jobs (Argus, Mentor's sheet, the screenshots commit) on the ones
+labelled `agents`, kept for the agents, and Mentor's screenshots (Odoo + Chrome) on the
+`odoo` ones, with the tests. A suite outside the organization (`dhongu/deltatech`) passes
 `runs-on: '"ubuntu-latest"'` and runs them on its own GitHub-hosted minutes.
 It also passes the secrets by name (`secrets: inherit` only works inside the organization).
 

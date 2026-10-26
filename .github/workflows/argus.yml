@@ -14,10 +14,11 @@ on:
         default: main
       runs-on:
         description: >-
-          JSON runner labels for the jobs: the org's VPS runners by default, or e.g.
-          '"ubuntu-latest"' for a suite outside the org (its own GitHub-hosted minutes).
+          JSON runner labels for all the jobs, e.g. '"ubuntu-latest"' for a suite outside
+          the org (its own GitHub-hosted minutes). Empty: the org's VPS runners, the light
+          jobs on the "agents" ones and Mentor's screenshots on the "odoo" ones, as the tests.
         type: string
-        default: '["self-hosted", "linux", "odoo"]'
+        default: ""
       lint:
         description: >-
           Run tb-odoo-lint on the PR's .py/.xml files first; Argus confirms or rejects
@@ -42,13 +43,14 @@ jobs:
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.sender.login != 'mentor-terrabit[bot]'
-    # The org has no GitHub-hosted minutes: same VPS runners as test.yml by default.
+    # The org has no GitHub-hosted minutes: its VPS runners, on the "agents" ones kept
+    # for the agents, so a review does not wait behind the test shards.
     # At job level, so a skipped run (Mentor's push) does not cancel the
     # review in progress; a new push by the author does.
     concurrency:
       group: argus-${{ github.event.pull_request.number }}
       cancel-in-progress: true
-    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    runs-on: ${{ fromJSON(inputs.runs-on || '["self-hosted", "linux", "agents"]') }}
     timeout-minutes: 20
     permissions:
       contents: read

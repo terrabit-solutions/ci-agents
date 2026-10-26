@@ -19,10 +19,11 @@ on:
         default: main
       runs-on:
         description: >-
-          JSON runner labels for the jobs: the org's VPS runners by default, or e.g.
-          '"ubuntu-latest"' for a suite outside the org (its own GitHub-hosted minutes).
+          JSON runner labels for all the jobs, e.g. '"ubuntu-latest"' for a suite outside
+          the org (its own GitHub-hosted minutes). Empty: the org's VPS runners, the light
+          jobs on the "agents" ones and Mentor's screenshots on the "odoo" ones, as the tests.
         type: string
-        default: '["self-hosted", "linux", "odoo"]'
+        default: ""
       postgres-image:
         description: The Postgres image of the suite's test.yml (pgvector where Enterprise `ai` is in).
         type: string
@@ -63,8 +64,9 @@ jobs:
     concurrency:
       group: mentor-${{ github.event.pull_request.number }}
       cancel-in-progress: true
-    # The org has no GitHub-hosted minutes: same VPS runners as test.yml by default.
-    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    # The org has no GitHub-hosted minutes: its VPS runners, on the "agents" ones kept
+    # for the agents, so a review does not wait behind the test shards.
+    runs-on: ${{ fromJSON(inputs.runs-on || '["self-hosted", "linux", "agents"]') }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -372,7 +374,7 @@ jobs:
       actions: read
     outputs:
       count: ${{ steps.collect.outputs.count }}
-    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    runs-on: ${{ fromJSON(inputs.runs-on || '["self-hosted", "linux", "odoo"]') }}
     # Up to 10 modules, each installed and rendered by Playwright.
     timeout-minutes: 120
     # Same image, cache and database as test.yml (see the comments there).
@@ -709,7 +711,7 @@ jobs:
     concurrency:
       group: mentor-screenshots-commit-${{ github.event.pull_request.number }}
       cancel-in-progress: false
-    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    runs-on: ${{ fromJSON(inputs.runs-on || '["self-hosted", "linux", "agents"]') }}
     timeout-minutes: 10
     # The OCA image only for Pillow; nothing from the PR runs here.
     container:
