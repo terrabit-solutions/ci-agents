@@ -34,6 +34,10 @@ on:
         required: false
       ARGUS_APP_PRIVATE_KEY:
         required: false
+      MENTOR_APP_ID:
+        required: false
+      MENTOR_APP_PRIVATE_KEY:
+        required: false
 
 jobs:
   review:
@@ -207,10 +211,23 @@ jobs:
       # app token trigger workflows). Claude only reports the counts; this step decides, and
       # also counts the [blocant]/[important] comments Argus posted on this head, so a
       # misreported verdict can only hold a draft back. Label "wip" to keep the draft.
+      # GitHub lets an app mark a PR ready only with contents write, which Argus does not
+      # have: the Mentor app does it, with a token made after Claude has finished.
+      - name: Mentor token, to mark the draft ready
+        id: ready-app
+        if: github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'wip')
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.MENTOR_APP_ID }}
+          private-key: ${{ secrets.MENTOR_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
       - name: Ready for review, if the draft is clean
         if: github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'wip')
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
+          READY_TOKEN: ${{ steps.ready-app.outputs.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -241,7 +258,7 @@ jobs:
             echo "$flagged blocking or important comments on this head: the PR stays a draft."
             exit 0
           fi
-          gh pr ready "$PR_NUMBER" -R "$REPO"
+          GH_TOKEN="$READY_TOKEN" gh pr ready "$PR_NUMBER" -R "$REPO"
           gh pr comment "$PR_NUMBER" -R "$REPO" --body "Review Argus curat: PR-ul trece pe Ready, pornesc testele și Mentor. (Eticheta \`wip\` îl ține ca draft.)"
       # The action hides Claude's output. Show only the commands the
       # permission rules refused and, on failure, the final result text,

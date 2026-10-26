@@ -53,11 +53,12 @@ permissions:
 
 jobs:
   sheet:
-    # Not on drafts, forks, Mentor's own pushes or PRs labelled mentor-skip.
+    # Not on drafts, forks, Mentor's own pushes or PRs labelled mentor-skip. A draft that
+    # Argus moves to Ready carries Mentor's app as sender too: only its pushes are skipped.
     if: >-
       !github.event.pull_request.draft &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.sender.login != 'mentor-terrabit[bot]' &&
+      (github.event.action != 'synchronize' || github.event.sender.login != 'mentor-terrabit[bot]') &&
       !contains(github.event.pull_request.labels.*.name, 'mentor-skip')
     # At job level, so Mentor's own push (job skipped) does not cancel the run
     # that made it; a new push by the author does.
@@ -363,7 +364,7 @@ jobs:
     if: >-
       !github.event.pull_request.draft &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.sender.login != 'mentor-terrabit[bot]' &&
+      (github.event.action != 'synchronize' || github.event.sender.login != 'mentor-terrabit[bot]') &&
       !contains(github.event.pull_request.labels.*.name, 'mentor-skip')
     concurrency:
       group: mentor-screenshots-${{ github.event.pull_request.number }}
