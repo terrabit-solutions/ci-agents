@@ -550,6 +550,39 @@ jobs:
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
               fh.write(text)
           EOF
+      # The commit messages carry only the summary: the whole report (verdict, findings,
+      # regenerated screenshots, failures) goes in one PR comment, edited at every run.
+      # Mentor's app needs Pull requests: write for it; without it the run goes on, with
+      # a warning, and the report stays in the commits and on this Summary page.
+      - name: Comment token
+        id: comment
+        if: always() && !cancelled()
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.MENTOR_APP_ID }}
+          private-key: ${{ secrets.MENTOR_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-pull-requests: write
+      - name: No comment token
+        if: always() && !cancelled() && steps.comment.outcome == 'failure'
+        run: echo "::warning::Mentor's app has no Pull requests write permission yet; no PR comment."
+      - name: Mentor's report on the PR
+        if: always() && !cancelled() && steps.comment.outcome == 'success'
+        continue-on-error: true
+        env:
+          MENTOR_TOKEN: ${{ steps.comment.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BRANCH: ${{ github.head_ref }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          SCREENSHOTS: ${{ needs.screenshots.result }}
+          SHOTS_COMMIT: ${{ needs.screenshots-commit.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 -I .ci-agents/mentor/pr_comment.py "$REPO" "$PR_NUMBER" "$BRANCH" "$PR_SHA" \
+            .mentor-report.json .mentor-verify.json | tee -a "$GITHUB_STEP_SUMMARY"
 
   # Phase 2: the screenshots of the sheets. For the modules the PR changes that
   # have tests/test_screenshots.py, runs their fise_screenshots tests in the same
