@@ -1,7 +1,7 @@
 name: argus
 
 # Argus, the advisory AI review of a suite's pull requests: it comments, it never blocks the
-# merge. Called by .github/workflows/argus.yml of each suite (which sets the triggers). The
+# merge, and it moves a clean draft to Ready (label "wip" to keep it a draft). Called by .github/workflows/argus.yml of each suite (which sets the triggers). The
 # rules (argus/REVIEW.md) and the scripts come from this repository, plus the suite's own
 # .github/argus/REVIEW.local.md from its base branch, so a PR cannot change how it is reviewed.
 
@@ -139,6 +139,7 @@ jobs:
           sparse-checkout-cone-mode: true
       - name: Prepare Argus rules
         run: |
+          rm -f "$RUNNER_TEMP/argus-verdict"
           rm -rf .argus
           cp -r .ci-agents/argus .argus
           if [ -f .argus-base/.github/argus/REVIEW.local.md ]; then
@@ -200,8 +201,48 @@ jobs:
           claude_args: |
             --model sonnet
             --max-turns 40
-            --allowedTools "Read(./**),Grep(./**),Glob(./**),mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(.argus/comment.sh:*),Bash(.argus/needs-pacioli.sh)"
+            --allowedTools "Read(./**),Grep(./**),Glob(./**),mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(.argus/comment.sh:*),Bash(.argus/needs-pacioli.sh),Bash(.argus/verdict.sh:*)"
             --disallowedTools "Read(~/.*),Read(~/.*/**),Read(~/runner-*/.*),Read(//etc/**),Read(//proc/**),Read(//root/**)"
+      # A clean draft goes to Ready, which starts the tests and Mentor (events made with an
+      # app token trigger workflows). Claude only reports the counts; this step decides, and
+      # also counts the [blocant]/[important] comments Argus posted on this head, so a
+      # misreported verdict can only hold a draft back. Label "wip" to keep the draft.
+      - name: Ready for review, if the draft is clean
+        if: github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'wip')
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          verdict="$RUNNER_TEMP/argus-verdict"
+          if [ ! -s "$verdict" ]; then
+            echo "No verdict from Argus: the PR stays a draft."
+            exit 0
+          fi
+          read -r blocking important minor < "$verdict"
+          echo "Argus: $blocking blocking, $important important, $minor minor."
+          if [ "$blocking" != 0 ] || [ "$important" != 0 ]; then
+            echo "Issues to fix: the PR stays a draft."
+            exit 0
+          fi
+          # The PR as it is now: still a draft, same head, no wip label added meanwhile.
+          state=$(gh api "repos/$REPO/pulls/$PR_NUMBER" \
+            --jq '"\(.draft) \(.head.sha) \(any(.labels[]; .name == "wip"))"')
+          if [ "$state" != "true $HEAD_SHA false" ]; then
+            echo "The PR changed during the review ($state): left as it is."
+            exit 0
+          fi
+          flagged=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/comments" --jq '.[]
+            | select(.user.login == "argus-terrabit[bot]" and .commit_id == env.HEAD_SHA)
+            | select(.body | test("^\\*\\*\\[(blocant|important)\\]"))
+            | .id' | wc -l)
+          if [ "$flagged" -gt 0 ]; then
+            echo "$flagged blocking or important comments on this head: the PR stays a draft."
+            exit 0
+          fi
+          gh pr ready "$PR_NUMBER" -R "$REPO"
+          gh pr comment "$PR_NUMBER" -R "$REPO" --body "Review Argus curat: PR-ul trece pe Ready, pornesc testele și Mentor. (Eticheta \`wip\` îl ține ca draft.)"
       # The action hides Claude's output. Show only the commands the
       # permission rules refused and, on failure, the final result text,
       # which carries the error (auth, quota, ...). The tokens used go to the

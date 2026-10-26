@@ -23,7 +23,12 @@ importuri.
    din `.argus/` singure, fără `&&` și fără variabile în față: `PR_NUMBER` e
    deja setat.
 
-6. Dacă există `.argus/REVIEW.local.md`, citește-l după acest fișier: are
+6. După rezumat, rulează `.argus/verdict.sh <blocante> <importante> <minore>`, cu
+   cele trei numere din rezumat (de exemplu `.argus/verdict.sh 0 1 2`). Un PR draft
+   fără probleme blocante sau importante trece apoi singur pe Ready; numerele
+   trebuie să fie exact cele din comentarii.
+
+7. Dacă există `.argus/REVIEW.local.md`, citește-l după acest fișier: are
    regulile proprii suitei din acest repo și, unde se contrazic, au prioritate.
 
 ## Constatările linterului
