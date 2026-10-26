@@ -60,34 +60,34 @@ permissions:
 
 jobs:
   sheet:
-    # After the screenshots, as fisa-completa: the checker audits the sheet against the
-    # screenshots this PR produces, not the old ones. It runs whatever they did (none to
-    # make, failed or skipped); only a cancelled run stops it.
-    needs: [screenshots, screenshots-commit]
+    # Phase 1 of 3, as the fisa-completa skill: the author writes the sheet, the screenshots
+    # job renders the screens it calls for, then sheet-check audits the sheet against them.
     # Not on drafts, forks, Mentor's own pushes or PRs labelled mentor-skip. A draft that
     # Argus moves to Ready carries Argus's app as sender (and actor): the action refuses
     # bots, so each claude-code-action step below lists argus-terrabit in allowed_bots.
     if: >-
-      !cancelled() &&
       !github.event.pull_request.draft &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       (github.event.action != 'synchronize' || github.event.sender.login != 'mentor-terrabit[bot]') &&
       !contains(github.event.pull_request.labels.*.name, 'mentor-skip')
     # At job level, so Mentor's own push (job skipped) does not cancel the run
-    # that made it; a new push by the author does.
+    # that made it; a new push by the author does. Shared with sheet-check.
     concurrency:
       group: mentor-${{ github.event.pull_request.number }}
       cancel-in-progress: true
+    outputs:
+      count: ${{ steps.select.outputs.count }}
+      # The branch head after the sheet commit (the pushed head when there was none to make):
+      # the screenshots are rendered on it, so a step the sheet adds gets its screenshot.
+      head: ${{ steps.push.outputs.head || steps.head.outputs.sha }}
     # The org has no GitHub-hosted minutes: its VPS runners, on the "agents" ones kept
     # for the agents, so a review does not wait behind the test shards.
     runs-on: ${{ fromJSON(inputs.runs-on || '["self-hosted", "linux", "agents"]') }}
-    # Up to three rounds of fixes and checks.
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
-      # The branch as the screenshots job left it: its Mentor commit included.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ github.head_ref }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           # Claude may read the workspace: keep the token out of .git/config.
           persist-credentials: false
@@ -190,13 +190,15 @@ jobs:
         if: steps.select.outputs.count != '0'
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
+          PUSHED: ${{ github.event.pull_request.head.sha }}
         run: |
           cp -r .mentor/plugin/plugins/terrabit-odoo/skills/fisa-modul .mentor/fisa-modul
           cp .mentor/plugin/plugins/terrabit-odoo/agents/verificator-fisa.md .mentor/verificator-fisa.md
           # The PR diff on the selected modules, so Claude needs no git command
-          # (git diff/log accept --output and could write outside the sheet).
+          # (git diff/log accept --output and could write outside the sheet). Up to the
+          # author's push: Mentor's own commits (sheet, screenshots) are not the PR's code.
           mods=$(python3 -c 'import json;print(" ".join(m["module"] for m in json.load(open(".mentor-modules.json"))))')
-          git diff "$(git merge-base "$BASE" HEAD)" HEAD -- $mods > .mentor/pr.diff
+          git diff "$(git merge-base "$BASE" "$PUSHED")" "$PUSHED" -- $mods > .mentor/pr.diff
           cp .mentor/plugin/ci-agents/mentor/MENTOR.md .mentor/MENTOR.md
       # The action's own Bun setup needs `unzip`, which the runner lacks.
       - name: Install Bun without unzip
@@ -218,8 +220,9 @@ jobs:
           chmod +x "$RUNNER_TEMP/bun/bun-linux-x64/bun"
           echo "path=$RUNNER_TEMP/bun/bun-linux-x64/bun" >> "$GITHUB_OUTPUT"
       # Three roles, each in its own session, so the check cannot be skipped: the author
-      # writes, the checker audits, and on critical or major findings the author fixes and
-      # the checker looks again, up to three rounds, as the fisa-completa skill.
+      # writes here; the checker audits in sheet-check, after the screenshots, and on
+      # critical or major findings the author fixes and the checker looks again, up to
+      # three rounds, as the fisa-completa skill.
       - name: Mentor author - writes the sheets
         id: author
         if: steps.select.outputs.count != '0'
@@ -242,6 +245,187 @@ jobs:
       - name: Keep the 1-author session output
         if: always() && steps.author.outcome != 'skipped' && steps.author.outcome != ''
         run: cp "$RUNNER_TEMP/claude-execution-output.json" "$RUNNER_TEMP/mentor-1-author.json" 2>/dev/null || true
+      - name: Mentor token
+        if: steps.select.outputs.count != '0'
+        id: mentor
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.MENTOR_APP_ID }}
+          private-key: ${{ secrets.MENTOR_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      - name: Commit the sheets to the PR
+        id: push
+        if: steps.select.outputs.count != '0'
+        # Branch name and SHAs through env, never interpolated into the script:
+        # a branch name can carry shell metacharacters.
+        env:
+          MENTOR_TOKEN: ${{ steps.mentor.outputs.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.head_ref }}
+          HEAD_SHA: ${{ steps.head.outputs.sha }}
+        run: |
+          python3 -I .ci-agents/mentor/push_commit.py "$REPO" "$BRANCH" "$HEAD_SHA" \
+            .mentor-report.json - | tee -a "$GITHUB_STEP_SUMMARY"
+      # The selection and the author's report, for sheet-check.
+      - name: Keep the selection and the report
+        if: steps.select.outputs.count != '0'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mentor-sheet
+          path: |
+            .mentor-modules.json
+            .mentor-report.json
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 3
+      # The action hides Claude's output: for each session show the tools used,
+      # the refused commands, its final message and the tokens, on the run's
+      # Summary page.
+      - name: Show what each Mentor session did
+        if: always() && steps.select.outputs.count != '0'
+        run: python3 -I .ci-agents/mentor/show_sessions.py "$RUNNER_TEMP"
+
+  sheet-check:
+    # Phase 3 of 3: the checker audits the sheet against the screenshots of this run, and
+    # the author fixes critical and major findings, up to three rounds. It runs whatever the
+    # screenshots did (none to make, failed or skipped), once the sheet job is done, so the
+    # mentor-ok label and the PR comment come at the end of every run.
+    needs: [sheet, screenshots, screenshots-commit]
+    if: "!cancelled() && needs.sheet.result == 'success'"
+    concurrency:
+      group: mentor-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    runs-on: ${{ fromJSON(inputs.runs-on || '["self-hosted", "linux", "agents"]') }}
+    # Up to three rounds of fixes and checks.
+    timeout-minutes: 120
+    steps:
+      # The branch as the sheet and the screenshots left it: their Mentor commits included.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The head this sheet is checked on
+        id: head
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      # mentor-ok says "the screenshots and the sheet of this PR are done and clean", for the
+      # automerge workflow: the sheet job dropped it, it comes back only if this run ends clean.
+      # The Argus app labels it (Mentor's app has no pull request rights).
+      - name: Label token
+        id: label
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.ARGUS_APP_ID }}
+          private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-pull-requests: write
+      # Argus Terrabit app (read-only): this repository, the RO accounting reference and the
+      # Terrabit plugin with the fisa-modul skill, the verificator-fisa agent and Mentor's rules.
+      - name: Read token
+        id: read
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.ARGUS_APP_ID }}
+          private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
+          owner: terrabit-solutions
+          repositories: l10n_ro_ent,terrabit-claude
+          permission-contents: read
+      - name: Checkout the Mentor scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: terrabit-solutions/ci-agents
+          ref: ${{ inputs.agents-ref }}
+          path: .ci-agents
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: mentor
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: needs.sheet.outputs.count != '0'
+        with:
+          name: mentor-sheet
+      # The checkout is the branch now: if the author pushed again since, this run audits nothing
+      # and labels nothing; the run of the new push does it.
+      - name: Modules whose sheet the author wrote
+        id: select
+        env:
+          COUNT: ${{ needs.sheet.outputs.count }}
+          PUSHED: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if ! git merge-base --is-ancestor "$PUSHED" HEAD \
+              || git log --format=%an "$PUSHED..HEAD" | grep -qvF 'mentor-terrabit[bot]'; then
+            echo "::warning::The branch moved past $PUSHED: the run of the new push checks the sheet."
+            echo "count=0" >> "$GITHUB_OUTPUT"
+            echo "moved=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "count=${COUNT:-0}" >> "$GITHUB_OUTPUT"
+      - name: Checkout the RO accounting reference
+        if: steps.select.outputs.count != '0'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: terrabit-solutions/l10n_ro_ent
+          ref: ${{ inputs.odoo-version }}
+          token: ${{ steps.read.outputs.token }}
+          path: odoo-addons/l10n_ro_ent
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: |
+            skills/contabilitate-ro
+            l10n_ro_advance_invoice/readme
+      - name: Checkout the Terrabit plugin
+        if: steps.select.outputs.count != '0'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: terrabit-solutions/terrabit-claude
+          ref: main
+          token: ${{ steps.read.outputs.token }}
+          path: .mentor/plugin
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: |
+            plugins/terrabit-odoo/skills/fisa-modul
+            plugins/terrabit-odoo/agents
+            ci-agents/mentor
+      # The action restores .claude/ from the base branch before Claude starts,
+      # so the skill and the agent's instructions stay under .mentor/ and Claude
+      # reads them from there. MENTOR.md comes from terrabit-claude main, so the PR
+      # under review cannot change Mentor's rules.
+      - name: Prepare Mentor
+        if: steps.select.outputs.count != '0'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          PUSHED: ${{ github.event.pull_request.head.sha }}
+        run: |
+          cp -r .mentor/plugin/plugins/terrabit-odoo/skills/fisa-modul .mentor/fisa-modul
+          cp .mentor/plugin/plugins/terrabit-odoo/agents/verificator-fisa.md .mentor/verificator-fisa.md
+          # The PR diff on the selected modules, so Claude needs no git command
+          # (git diff/log accept --output and could write outside the sheet). Up to the
+          # author's push: Mentor's own commits (sheet, screenshots) are not the PR's code.
+          mods=$(python3 -c 'import json;print(" ".join(m["module"] for m in json.load(open(".mentor-modules.json"))))')
+          git diff "$(git merge-base "$BASE" "$PUSHED")" "$PUSHED" -- $mods > .mentor/pr.diff
+          cp .mentor/plugin/ci-agents/mentor/MENTOR.md .mentor/MENTOR.md
+      # The action's own Bun setup needs `unzip`, which the runner lacks.
+      - name: Install Bun without unzip
+        if: steps.select.outputs.count != '0'
+        id: bun
+        env:
+          BUN_VERSION: "1.4.4"
+          # From SHASUMS256.txt of the release.
+          BUN_SHA256: "bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c"
+        run: |
+          zip="$RUNNER_TOOL_CACHE/bun/bun-${BUN_VERSION}-linux-x64.zip"
+          mkdir -p "$(dirname "$zip")"
+          if ! echo "$BUN_SHA256  $zip" | sha256sum -c --status - 2>/dev/null; then
+            curl -fsSL -o "$zip" \
+              "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
+            echo "$BUN_SHA256  $zip" | sha256sum -c -
+          fi
+          python3 -m zipfile -e "$zip" "$RUNNER_TEMP/bun"
+          chmod +x "$RUNNER_TEMP/bun/bun-linux-x64/bun"
+          echo "path=$RUNNER_TEMP/bun/bun-linux-x64/bun" >> "$GITHUB_OUTPUT"
       - name: Mentor checker - audits the sheets
         id: check
         if: steps.select.outputs.count != '0'
@@ -466,7 +650,7 @@ jobs:
       # Clean: the screenshots made and committed (or none to make), every step above passed,
       # and no critical or major finding left after the last check.
       - name: mentor-ok, if everything is clean
-        if: success() && contains(fromJSON('["success","skipped"]'), needs.screenshots.result) && contains(fromJSON('["success","skipped"]'), needs.screenshots-commit.result)
+        if: success() && steps.select.outputs.moved != 'true' && contains(fromJSON('["success","skipped"]'), needs.screenshots.result) && contains(fromJSON('["success","skipped"]'), needs.screenshots-commit.result)
         env:
           GH_TOKEN: ${{ steps.label.outputs.token }}
           REPO: ${{ github.repository }}
@@ -498,58 +682,7 @@ jobs:
       # Summary page.
       - name: Show what each Mentor session did
         if: always() && steps.select.outputs.count != '0'
-        run: |
-          python3 - "$RUNNER_TEMP" <<'EOF'
-          import glob, json, os, sys
-          out, total = [], 0.0
-          names = {"1-author": "Autorul", "2-check": "Verificatorul"}
-          for n in (1, 2, 3):
-              names[f"{1 + 2 * n}-fix{n}"] = f"Autorul, la corectare (tura {n})"
-              names[f"{2 + 2 * n}-recheck{n}"] = f"Verificatorul, după tura {n}"
-          for path in sorted(glob.glob(os.path.join(sys.argv[1], "mentor-*.json"))):
-              role = os.path.basename(path)[7:-5]
-              try:
-                  data = json.load(open(path))
-              except ValueError:
-                  out.append(f"### {names.get(role, role)}\n\nRezultat ilizibil.\n")
-                  continue
-              data = data if isinstance(data, list) else [data]
-              tools = {}
-              # The execution file can hold plain strings next to the message objects.
-              data = [msg for msg in data if isinstance(msg, dict)]
-              for msg in data:
-                  # "message" and its "content" may be plain strings too.
-                  content = (msg.get("message") or {}).get("content") if isinstance(msg.get("message"), dict) else None
-                  for block in content if isinstance(content, list) else []:
-                      if isinstance(block, dict) and block.get("type") == "tool_use":
-                          tools[block["name"]] = tools.get(block["name"], 0) + 1
-              lines = [f"### {names.get(role, role)}", "",
-                       "Unelte: " + (", ".join(f"{k} ×{v}" for k, v in sorted(tools.items())) or "niciuna")]
-              for msg in data:
-                  if msg.get("type") != "result":
-                      continue
-                  for denial in msg.get("permission_denials") or []:
-                      lines.append(f"- refuzat: {denial.get('tool_name')} {json.dumps(denial.get('tool_input'), ensure_ascii=False)[:200]}")
-                  usage = msg.get("usage") or {}
-                  cost = msg.get("total_cost_usd") or 0
-                  total += cost
-                  fmt = lambda n: f"{n or 0:,}".replace(",", ".")
-                  lines.append(f"Tokeni: {fmt(usage.get('cache_read_input_tokens'))} din cache, "
-                               f"{fmt(usage.get('cache_creation_input_tokens'))} scriși în cache, "
-                               f"{fmt(usage.get('output_tokens'))} ieșire; {msg.get('num_turns', '')} pași, "
-                               f"{(msg.get('duration_ms') or 0) / 1000:.0f} s, " + f"{cost:.3f} $".replace(".", ","))
-                  if msg.get("is_error") or not msg.get("result"):
-                      lines.append(f"Eroare: {msg.get('result') or msg.get('errors') or msg.get('subtype')}")
-                  else:
-                      lines += ["", "> " + msg["result"].strip().replace("\n", "\n> ")]
-              out.append("\n".join(lines) + "\n")
-          out.append(f"**Cost echivalent API, total:** {total:.3f} $".replace(".", ",")
-                     + ". Pe abonament nu se plătește pe rulare: costul arată cât consumă din limita de 5 ore și din cea săptămânală.\n")
-          text = "\n".join(out)
-          print(text)
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
-              fh.write(text)
-          EOF
+        run: python3 -I .ci-agents/mentor/show_sessions.py "$RUNNER_TEMP"
       # The commit messages carry only the summary: the whole report (verdict, findings,
       # regenerated screenshots, failures) goes in one PR comment, edited at every run.
       # Mentor's app needs Pull requests: write for it; without it the run goes on, with
@@ -584,12 +717,16 @@ jobs:
           python3 -I .ci-agents/mentor/pr_comment.py "$REPO" "$PR_NUMBER" "$BRANCH" "$PR_SHA" \
             .mentor-report.json .mentor-verify.json | tee -a "$GITHUB_STEP_SUMMARY"
 
-  # Phase 2: the screenshots of the sheets. For the modules the PR changes that
-  # have tests/test_screenshots.py, runs their fise_screenshots tests in the same
-  # container as test.yml and pushes the screenshots that changed visibly as one
-  # Mentor commit. No AI: the screenshots come from the modules' own tests.
+  # Phase 2 of 3: the screenshots of the sheets, after the author wrote them. For the modules
+  # the PR changes that have tests/test_screenshots.py, runs their fise_screenshots tests in the
+  # same container as test.yml and pushes the screenshots that changed visibly as one Mentor
+  # commit. No AI: the screenshots come from the modules' own tests. On the branch as the sheet
+  # job left it, so a step its sheet adds counts (select_modules.py --screenshots).
   screenshots:
+    needs: sheet
+    # Whatever the sheet job did (failed, or skipped on a draft): the screens still follow the code.
     if: >-
+      !cancelled() &&
       !github.event.pull_request.draft &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       (github.event.action != 'synchronize' || github.event.sender.login != 'mentor-terrabit[bot]') &&
@@ -627,7 +764,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ needs.sheet.outputs.head || github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
       # Read-only Argus app token, for l10n_ro_doc_screenshots.
@@ -653,7 +790,7 @@ jobs:
         id: select
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
+          HEAD: ${{ needs.sheet.outputs.head || github.event.pull_request.head.sha }}
           BRANCH: ${{ github.head_ref }}
           GH_TOKEN: ${{ github.token }}
           # The suite's workflow file (this one is called from it): its runs are looked up.
@@ -944,8 +1081,8 @@ jobs:
           echo "::warning::Screenshots not regenerated in this run (limit 10): $LEFT. The next push takes them up."
 
   screenshots-commit:
-    needs: screenshots
-    if: needs.screenshots.outputs.count > 0
+    needs: [sheet, screenshots]
+    if: "!cancelled() && needs.screenshots.result == 'success' && needs.screenshots.outputs.count > 0"
     concurrency:
       group: mentor-screenshots-commit-${{ github.event.pull_request.number }}
       cancel-in-progress: false
@@ -957,7 +1094,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ needs.sheet.outputs.head || github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Checkout the Mentor scripts
@@ -974,7 +1111,7 @@ jobs:
       - name: Modules allowed
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
+          HEAD: ${{ needs.sheet.outputs.head || github.event.pull_request.head.sha }}
         run: |
           git config --global --add safe.directory "$PWD"
           python3 -I ".ci-agents/mentor/select_modules.py" "$(git merge-base "$BASE" "$HEAD")" "$HEAD" \
@@ -1003,7 +1140,8 @@ jobs:
           MENTOR_TOKEN: ${{ steps.mentor.outputs.token }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.head_ref }}
-          TESTED: ${{ github.event.pull_request.head.sha }}
+          # The commit the screenshots were rendered on: the sheet's, when Mentor made one.
+          TESTED: ${{ needs.sheet.outputs.head || github.event.pull_request.head.sha }}
         run: |
           python3 -I ".ci-agents/mentor/push_screenshots.py" "$REPO" "$BRANCH" "$RUNNER_TEMP/modules.json" "$TESTED" \
             | tee -a "$GITHUB_STEP_SUMMARY"

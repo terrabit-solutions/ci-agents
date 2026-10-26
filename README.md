@@ -6,7 +6,7 @@ made once and reaches every suite.
 | Agent | What it does | Workflow |
 |---|---|---|
 | Argus | Advisory AI review of every PR, drafts included; never blocks the merge. A draft with no blocking or important issue goes to Ready by itself (label `wip` keeps it a draft) | `.github/workflows/argus.yml` |
-| Mentor | Regenerates the screenshots of the modules whose screens a PR changes (view, wizard or OWL XML, the screenshot test, new steps in the sheet), then writes or updates their consultant sheet and has it audited against them, up to three rounds of fixes (as the fisa-completa skill); all as commits on the PR | `.github/workflows/mentor.yml` |
+| Mentor | As the fisa-completa skill, in three jobs: writes or updates the consultant sheet of the modules a PR changes functionally, regenerates the screenshots whose screens changed or that the sheet calls for (view, wizard or OWL XML, the screenshot test, new steps in the sheet), then has the sheet audited against them, up to three rounds of fixes; all as commits on the PR, with the report as one PR comment | `.github/workflows/mentor.yml` |
 | Automerge | Merges a PR labelled `automerge` once Argus is clean (`argus-ok`), Mentor is done and clean (`mentor-ok`), nothing runs on its branch and every run on its head passed; `wip`, `needs-pacioli` and `no-merge` stop it. No AI | `.github/workflows/automerge.yml` |
 
 Both are reusable workflows (`workflow_call`), run on the self-hosted runners of the
@@ -51,7 +51,8 @@ reviewed or what Mentor commits.
 
 - `argus/`: `comment.sh` and `needs-pacioli.sh` (the only writes Argus may make),
   `verdict.sh` (the counts; a workflow step, not Argus, moves the draft)
-- `mentor/`: `select_modules.py`, `push_commit.py`, `push_screenshots.py`
+- `mentor/`: `select_modules.py`, `push_commit.py`, `push_screenshots.py`, `pr_comment.py`,
+  `show_sessions.py`, `carry_result.py`
 
 The rules themselves (Argus's `REVIEW.md`, Mentor's `MENTOR.md`) are not here: they live in
 `ci-agents/` of the private `terrabit-solutions/terrabit-claude` and are read with the Argus
