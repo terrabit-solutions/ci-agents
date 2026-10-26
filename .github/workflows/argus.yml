@@ -119,6 +119,15 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: read
           permission-pull-requests: write
+      # argus-ok says "Argus found nothing blocking or important on this head", for the
+      # automerge workflow: it goes away when a new review starts and comes back only if
+      # this one is clean.
+      - name: Drop argus-ok until this review is done
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh api -X DELETE "repos/$REPO/issues/$PR_NUMBER/labels/argus-ok" --silent 2>/dev/null || true
       - name: Checkout the shared Argus scripts
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -244,9 +253,9 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
           permission-pull-requests: write
-      - name: Ready for review, if the draft is clean
-        if: github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'wip')
+      - name: Verdict - argus-ok, and Ready if the draft is clean
         env:
+          DRAFT: ${{ github.event.pull_request.draft }}
           GH_TOKEN: ${{ steps.app.outputs.token }}
           READY_TOKEN: ${{ steps.ready-app.outputs.token }}
           REPO: ${{ github.repository }}
@@ -255,20 +264,21 @@ jobs:
         run: |
           verdict="$RUNNER_TEMP/argus-verdict"
           if [ ! -s "$verdict" ]; then
-            echo "No verdict from Argus: the PR stays a draft."
+            echo "No verdict from Argus: no argus-ok, a draft stays a draft."
             exit 0
           fi
           read -r blocking important minor < "$verdict"
           echo "Argus: $blocking blocking, $important important, $minor minor."
           if [ "$blocking" != 0 ] || [ "$important" != 0 ]; then
-            echo "Issues to fix: the PR stays a draft."
+            echo "Issues to fix: no argus-ok, a draft stays a draft."
             exit 0
           fi
-          # The PR as it is now: still a draft, same head, no wip label added meanwhile.
+          # The PR as it is now: same head, and whether wip was added meanwhile.
           state=$(gh api "repos/$REPO/pulls/$PR_NUMBER" \
             --jq '"\(.draft) \(.head.sha) \(any(.labels[]; .name | ascii_downcase == "wip"))"')
-          if [ "$state" != "true $HEAD_SHA false" ]; then
-            echo "The PR changed during the review ($state): left as it is."
+          read -r now_draft now_head now_wip <<< "$state"
+          if [ "$now_head" != "$HEAD_SHA" ]; then
+            echo "New commits during the review ($now_head): the next review decides."
             exit 0
           fi
           flagged=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/comments" --jq '.[]
@@ -276,7 +286,12 @@ jobs:
             | select(.body | test("^\\*\\*\\[(blocant|important)\\]"))
             | .id' | wc -l)
           if [ "$flagged" -gt 0 ]; then
-            echo "$flagged blocking or important comments on this head: the PR stays a draft."
+            echo "$flagged blocking or important comments on this head: no argus-ok."
+            exit 0
+          fi
+          gh api "repos/$REPO/issues/$PR_NUMBER/labels" -f "labels[]=argus-ok" --silent
+          echo "Clean review: argus-ok."
+          if [ "$now_draft" != true ] || [ "$now_wip" = true ] || [ -z "$READY_TOKEN" ]; then
             exit 0
           fi
           GH_TOKEN="$READY_TOKEN" gh pr ready "$PR_NUMBER" -R "$REPO"

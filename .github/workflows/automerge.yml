@@ -1,0 +1,93 @@
+name: automerge
+
+# Merges a suite's PR labelled `automerge` once it is ready: Argus clean (argus-ok), Mentor done
+# and clean (mentor-ok), nothing running on its branch, every run on its head passed, no wip,
+# needs-pacioli or no-merge. Called by .github/workflows/automerge.yml of each suite, after each
+# of its PR workflows ends and when a label is added. No AI: automerge/decide.py reads the PR's
+# state and merges with the Argus app, pinned to the commit it checked.
+
+on:
+  workflow_call:
+    inputs:
+      agents-ref:
+        description: Branch or tag of terrabit-solutions/ci-agents for the script.
+        type: string
+        default: main
+      runs-on:
+        description: >-
+          JSON runner labels, e.g. '"ubuntu-latest"' for a suite outside the org. Empty: the
+          org's VPS runners kept for the agents.
+        type: string
+        default: ""
+      merge-method:
+        description: merge, squash or rebase, as the suite merges by hand.
+        type: string
+        default: merge
+    secrets:
+      ARGUS_APP_ID:
+        required: false
+      ARGUS_APP_PRIVATE_KEY:
+        required: false
+
+jobs:
+  merge:
+    # Only for runs of pull requests from this repository (not pushes to 19.0, not forks).
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.head_repository.full_name == github.repository) ||
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+    concurrency:
+      group: automerge-${{ github.event.workflow_run.head_branch || github.head_ref }}
+      cancel-in-progress: false
+    runs-on: ${{ fromJSON(inputs.runs-on || '["self-hosted", "linux", "agents"]') }}
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    steps:
+      - name: The pull requests to check
+        id: prs
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          event = json.load(open(os.environ["GITHUB_EVENT_PATH"]))
+          if "workflow_run" in event:
+              numbers = [str(p["number"]) for p in event["workflow_run"].get("pull_requests") or []]
+          else:
+              numbers = [str(event["pull_request"]["number"])]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"numbers={' '.join(numbers)}\n")
+          print("PR:", " ".join(numbers) or "niciunul")
+          EOF
+      - name: Checkout the automerge script
+        if: steps.prs.outputs.numbers != ''
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: terrabit-solutions/ci-agents
+          ref: ${{ inputs.agents-ref }}
+          path: .ci-agents
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: automerge
+      # The Argus app merges (contents write); made only when there is a PR to look at.
+      - name: Argus token, to merge
+        id: app
+        if: steps.prs.outputs.numbers != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.ARGUS_APP_ID }}
+          private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Merge what is ready
+        if: steps.prs.outputs.numbers != ''
+        env:
+          READ_TOKEN: ${{ github.token }}
+          MERGE_TOKEN: ${{ steps.app.outputs.token }}
+          MERGE_METHOD: ${{ inputs.merge-method }}
+          REPO: ${{ github.repository }}
+          NUMBERS: ${{ steps.prs.outputs.numbers }}
+        run: python3 -I .ci-agents/automerge/decide.py "$REPO" $NUMBERS

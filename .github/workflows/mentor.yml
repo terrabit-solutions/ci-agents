@@ -87,6 +87,24 @@ jobs:
       - name: The head this sheet is written for
         id: head
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      # mentor-ok says "the screenshots and the sheet of this PR are done and clean", for the
+      # automerge workflow: it goes away now and comes back only if this run ends clean.
+      # The Argus app labels it (Mentor's app has no pull request rights).
+      - name: Label token
+        id: label
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.ARGUS_APP_ID }}
+          private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-pull-requests: write
+      - name: Drop mentor-ok until this run is done
+        env:
+          GH_TOKEN: ${{ steps.label.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh api -X DELETE "repos/$REPO/issues/$PR_NUMBER/labels/mentor-ok" --silent 2>/dev/null || true
       # Argus Terrabit app (read-only): this repository, the RO accounting reference and the
       # Terrabit plugin with the fisa-modul skill, the verificator-fisa agent and Mentor's rules.
       - name: Read token
@@ -434,6 +452,34 @@ jobs:
         run: |
           python3 -I .ci-agents/mentor/push_commit.py "$REPO" "$BRANCH" "$HEAD_SHA" \
             .mentor-report.json .mentor-verify.json | tee -a "$GITHUB_STEP_SUMMARY"
+      # Clean: the screenshots made and committed (or none to make), every step above passed,
+      # and no critical or major finding left after the last check.
+      - name: mentor-ok, if everything is clean
+        if: success() && contains(fromJSON('["success","skipped"]'), needs.screenshots.result) && contains(fromJSON('["success","skipped"]'), needs.screenshots-commit.result)
+        env:
+          GH_TOKEN: ${{ steps.label.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          COUNT: ${{ steps.select.outputs.count }}
+        run: |
+          if [ "$COUNT" != 0 ]; then
+            left=$(python3 - <<'EOF'
+          import json
+          try:
+              data = json.load(open(".mentor-verify.json"))
+          except (OSError, ValueError):
+              data = None
+          print("?" if data is None else sum(
+              1 for m in data for f in m.get("findings", []) if f.get("severity") in ("critic", "major")))
+          EOF
+            )
+            if [ "$left" != 0 ]; then
+              echo "Findings left after the last check ($left): no mentor-ok, the merge stays manual."
+              exit 0
+            fi
+          fi
+          gh api "repos/$REPO/issues/$PR_NUMBER/labels" -f "labels[]=mentor-ok" --silent
+          echo "Screenshots and sheet clean: mentor-ok."
       # The action hides Claude's output: for each session show the tools used,
       # the refused commands, its final message and the tokens, on the run's
       # Summary page.
