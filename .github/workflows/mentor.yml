@@ -3,8 +3,8 @@ name: mentor
 # Mentor, called by .github/workflows/mentor.yml of each suite (which sets the triggers):
 # when a PR changes a module functionally, it writes or updates the module's consultant
 # sheet (readme/FISA_CONSULTANT.md) and regenerates its screenshots, as Mentor commits on
-# the same PR. Rules (mentor/MENTOR.md) and scripts come from this repository, so a PR
-# cannot change them. Label a PR "mentor-skip" to leave it alone.
+# the same PR. Scripts come from this repository and the rules (ci-agents/mentor/MENTOR.md)
+# from the private terrabit-solutions/terrabit-claude, so a PR cannot change them. Label a PR "mentor-skip" to leave it alone.
 #
 # The suite provides two scripts on its base branch, for the screenshots job:
 #   .github/mentor/private_repos.sh  the private clones (the only step with credentials)
@@ -14,7 +14,7 @@ on:
   workflow_call:
     inputs:
       agents-ref:
-        description: Branch or tag of terrabit-solutions/ci-agents for the rules and scripts.
+        description: Branch or tag of terrabit-solutions/ci-agents for the scripts (the rules follow terrabit-claude main).
         type: string
         default: main
       runs-on:
@@ -88,7 +88,7 @@ jobs:
         id: head
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       # Argus Terrabit app (read-only): this repository, the RO accounting reference and the
-      # Terrabit plugin with the fisa-modul skill and the verificator-fisa agent.
+      # Terrabit plugin with the fisa-modul skill, the verificator-fisa agent and Mentor's rules.
       - name: Read token
         id: read
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -98,7 +98,7 @@ jobs:
           owner: terrabit-solutions
           repositories: l10n_ro_ent,terrabit-claude
           permission-contents: read
-      - name: Checkout the Mentor rules and scripts
+      - name: Checkout the Mentor scripts
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: terrabit-solutions/ci-agents
@@ -152,9 +152,10 @@ jobs:
           sparse-checkout: |
             plugins/terrabit-odoo/skills/fisa-modul
             plugins/terrabit-odoo/agents
+            ci-agents/mentor
       # The action restores .claude/ from the base branch before Claude starts,
       # so the skill and the agent's instructions stay under .mentor/ and Claude
-      # reads them from there. MENTOR.md comes from this repository, so the PR
+      # reads them from there. MENTOR.md comes from terrabit-claude main, so the PR
       # under review cannot change Mentor's rules.
       - name: Prepare Mentor
         if: steps.select.outputs.count != '0'
@@ -167,7 +168,7 @@ jobs:
           # (git diff/log accept --output and could write outside the sheet).
           mods=$(python3 -c 'import json;print(" ".join(m["module"] for m in json.load(open(".mentor-modules.json"))))')
           git diff "$(git merge-base "$BASE" HEAD)" HEAD -- $mods > .mentor/pr.diff
-          cp .ci-agents/mentor/MENTOR.md .mentor/MENTOR.md
+          cp .mentor/plugin/ci-agents/mentor/MENTOR.md .mentor/MENTOR.md
       # The action's own Bun setup needs `unzip`, which the runner lacks.
       - name: Install Bun without unzip
         if: steps.select.outputs.count != '0'
