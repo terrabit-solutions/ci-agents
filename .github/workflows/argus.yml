@@ -125,6 +125,21 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: read
           permission-pull-requests: write
+      # A freshly made app token may answer 404 ("Repository not found") for a few
+      # minutes, seen on 27.10 07:17-07:45: wait until it sees the repository instead
+      # of failing on the first git or gh call.
+      - name: Wait until the Argus token sees the repository
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          for i in 1 2 3 4 5 6 7 8; do
+            gh api "repos/$REPO" --silent 2>/dev/null && exit 0
+            echo "The new token does not see $REPO yet (404), retrying in $((i * 5))s."
+            sleep $((i * 5))
+          done
+          echo "::error::The app token still does not see $REPO after 3 minutes."
+          exit 1
       # argus-ok says "Argus found nothing blocking or important on this head", for the
       # automerge workflow: it goes away when a new review starts and comes back only if
       # this one is clean.
@@ -154,6 +169,18 @@ jobs:
           owner: terrabit-solutions
           repositories: terrabit-claude
           permission-contents: read
+      - name: Wait until the rules token sees terrabit-claude
+        env:
+          GH_TOKEN: ${{ steps.rules.outputs.token }}
+          REPO: terrabit-solutions/terrabit-claude
+        run: |
+          for i in 1 2 3 4 5 6 7 8; do
+            gh api "repos/$REPO" --silent 2>/dev/null && exit 0
+            echo "The new token does not see $REPO yet (404), retrying in $((i * 5))s."
+            sleep $((i * 5))
+          done
+          echo "::error::The app token still does not see $REPO after 3 minutes."
+          exit 1
       - name: Checkout the shared Argus rules
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -261,6 +288,19 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
           permission-pull-requests: write
+      - name: Wait until the ready token sees the repository
+        if: steps.ready-app.outputs.token
+        env:
+          GH_TOKEN: ${{ steps.ready-app.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          for i in 1 2 3 4 5 6 7 8; do
+            gh api "repos/$REPO" --silent 2>/dev/null && exit 0
+            echo "The new token does not see $REPO yet (404), retrying in $((i * 5))s."
+            sleep $((i * 5))
+          done
+          echo "::error::The app token still does not see $REPO after 3 minutes."
+          exit 1
       - name: Verdict - argus-ok, and Ready if the draft is clean
         env:
           DRAFT: ${{ github.event.pull_request.draft }}
@@ -270,6 +310,17 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          # gh api, retried: an app token can still answer 404 now and then after it
+          # first worked (27.10, after a clean review the PR stayed a draft).
+          ghr() {
+            local i
+            for i in 1 2 3 4 5; do
+              gh api "$@" && return 0
+              echo "gh api $1 failed, retrying in $((i * 10))s." >&2
+              sleep $((i * 10))
+            done
+            gh api "$@"
+          }
           verdict="$RUNNER_TEMP/argus-verdict"
           if [ ! -s "$verdict" ]; then
             echo "No verdict from Argus: no argus-ok, a draft stays a draft."
@@ -282,14 +333,14 @@ jobs:
             exit 0
           fi
           # The PR as it is now: same head, and whether wip was added meanwhile.
-          state=$(gh api "repos/$REPO/pulls/$PR_NUMBER" \
+          state=$(ghr "repos/$REPO/pulls/$PR_NUMBER" \
             --jq '"\(.draft) \(.head.sha) \(any(.labels[]; .name | ascii_downcase == "wip"))"')
           read -r now_draft now_head now_wip <<< "$state"
           if [ "$now_head" != "$HEAD_SHA" ]; then
             echo "New commits during the review ($now_head): the next review decides."
             exit 0
           fi
-          flagged=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/comments" --jq '.[]
+          flagged=$(ghr "repos/$REPO/pulls/$PR_NUMBER/comments" --paginate --jq '.[]
             | select(.user.login == "argus-terrabit[bot]" and .commit_id == env.HEAD_SHA)
             | select(.body | test("^\\*\\*\\[(blocant|important)\\]"))
             | .id' | wc -l)
@@ -297,7 +348,7 @@ jobs:
             echo "$flagged blocking or important comments on this head: no argus-ok."
             exit 0
           fi
-          gh api "repos/$REPO/issues/$PR_NUMBER/labels" -f "labels[]=argus-ok" --silent
+          ghr "repos/$REPO/issues/$PR_NUMBER/labels" -f "labels[]=argus-ok" --silent
           echo "Clean review: argus-ok."
           if [ "$now_draft" != true ] || [ "$now_wip" = true ] || [ -z "$READY_TOKEN" ]; then
             exit 0
