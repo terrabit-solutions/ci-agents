@@ -119,7 +119,7 @@ jobs:
         id: app
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.ARGUS_APP_ID }}
+          client-id: Iv23liGeN7tupqZ8jQoZ # Argus Terrabit, public Client ID
           private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
@@ -164,7 +164,7 @@ jobs:
         id: rules
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.ARGUS_APP_ID }}
+          client-id: Iv23liGeN7tupqZ8jQoZ # Argus Terrabit, public Client ID
           private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
           owner: terrabit-solutions
           repositories: terrabit-claude
@@ -282,7 +282,7 @@ jobs:
         if: github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'wip')
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.ARGUS_APP_ID }}
+          client-id: Iv23liGeN7tupqZ8jQoZ # Argus Terrabit, public Client ID
           private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
