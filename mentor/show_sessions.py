@@ -3,14 +3,14 @@
 
 Acțiunea ascunde ieșirea lui Claude: pentru fiecare sesiune (fișierele
 `mentor-<rol>.json` din RUNNER_TEMP) scrie uneltele folosite, comenzile refuzate,
-mesajul final și tokenii. Rulat la sfârșitul joburilor sheet și sheet-check.
+mesajul final și tokenii. Rulat la sfârșitul joburilor sheet, sheet-check și review.
 
 Folosire:
     python3 -I show_sessions.py "$RUNNER_TEMP"
 """
 import glob, json, os, sys
 out, total = [], 0.0
-names = {"1-author": "Autorul", "2-check": "Verificatorul"}
+names = {"1-author": "Autorul", "2-check": "Verificatorul", "review": "Recenzentul"}
 for n in (1, 2, 3):
     names[f"{1 + 2 * n}-fix{n}"] = f"Autorul, la corectare (tura {n})"
     names[f"{2 + 2 * n}-recheck{n}"] = f"Verificatorul, după tura {n}"
