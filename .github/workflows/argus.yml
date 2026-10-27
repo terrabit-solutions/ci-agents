@@ -221,6 +221,7 @@ jobs:
       - name: Argus review
         uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
         env:
+          HOME: ${{ runner.temp }}/claude-home
           # Read by the .argus/*.sh scripts.
           PR_NUMBER: ${{ github.event.pull_request.number }}
         with:

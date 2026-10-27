@@ -220,6 +220,8 @@ jobs:
         id: reviewer
         if: steps.precheck.outputs.sheets > 0
         uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        env:
+          HOME: ${{ runner.temp }}/claude-home
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -465,6 +467,8 @@ jobs:
         id: author
         if: steps.select.outputs.count != '0'
         uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        env:
+          HOME: ${{ runner.temp }}/claude-home
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -668,6 +672,8 @@ jobs:
         id: check
         if: steps.select.outputs.count != '0'
         uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        env:
+          HOME: ${{ runner.temp }}/claude-home
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -705,6 +711,8 @@ jobs:
         id: fix1
         if: steps.findings1.outputs.fix == 'true'
         uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        env:
+          HOME: ${{ runner.temp }}/claude-home
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -727,6 +735,8 @@ jobs:
         id: recheck1
         if: steps.findings1.outputs.fix == 'true'
         uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        env:
+          HOME: ${{ runner.temp }}/claude-home
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -764,6 +774,8 @@ jobs:
         id: fix2
         if: steps.findings2.outputs.fix == 'true'
         uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        env:
+          HOME: ${{ runner.temp }}/claude-home
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -786,6 +798,8 @@ jobs:
         id: recheck2
         if: steps.findings2.outputs.fix == 'true'
         uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        env:
+          HOME: ${{ runner.temp }}/claude-home
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -823,6 +837,8 @@ jobs:
         id: fix3
         if: steps.findings3.outputs.fix == 'true'
         uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        env:
+          HOME: ${{ runner.temp }}/claude-home
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -845,6 +861,8 @@ jobs:
         id: recheck3
         if: steps.findings3.outputs.fix == 'true'
         uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        env:
+          HOME: ${{ runner.temp }}/claude-home
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
