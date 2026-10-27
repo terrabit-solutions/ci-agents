@@ -70,10 +70,12 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       (github.event.action != 'synchronize' || github.event.sender.login != 'mentor-terrabit[bot]') &&
       !contains(github.event.pull_request.labels.*.name, 'mentor-skip')
-    # At job level, so Mentor's own push (job skipped) does not cancel the run
-    # that made it; a new push by the author does. Shared with sheet-check.
+    # At job level, so a new push by the author cancels the run in progress. GitHub applies
+    # the group even to a skipped job, so Mentor's own push gets a group of its own (-bot):
+    # otherwise its run cancels the one that made it, and carry sees that run as failed.
+    # Shared with sheet-check.
     concurrency:
-      group: mentor-${{ github.event.pull_request.number }}
+      group: mentor-${{ github.event.pull_request.number }}${{ github.event.sender.login == 'mentor-terrabit[bot]' && '-bot' || '' }}
       cancel-in-progress: true
     outputs:
       count: ${{ steps.select.outputs.count }}
@@ -295,7 +297,7 @@ jobs:
     needs: [sheet, screenshots, screenshots-commit]
     if: "!cancelled() && needs.sheet.result == 'success'"
     concurrency:
-      group: mentor-${{ github.event.pull_request.number }}
+      group: mentor-${{ github.event.pull_request.number }}${{ github.event.sender.login == 'mentor-terrabit[bot]' && '-bot' || '' }}
       cancel-in-progress: true
     runs-on: ${{ fromJSON(inputs.runs-on || '["self-hosted", "linux", "agents"]') }}
     # Up to three rounds of fixes and checks.
@@ -732,7 +734,7 @@ jobs:
       (github.event.action != 'synchronize' || github.event.sender.login != 'mentor-terrabit[bot]') &&
       !contains(github.event.pull_request.labels.*.name, 'mentor-skip')
     concurrency:
-      group: mentor-screenshots-${{ github.event.pull_request.number }}
+      group: mentor-screenshots-${{ github.event.pull_request.number }}${{ github.event.sender.login == 'mentor-terrabit[bot]' && '-bot' || '' }}
       cancel-in-progress: true
     # actions: read to find the commit whose screenshots were last checked.
     permissions:
