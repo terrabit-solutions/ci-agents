@@ -97,13 +97,13 @@ jobs:
           persist-credentials: false
       # mentor-ok says "the sheets of this PR are there and complete", for the automerge
       # workflow: it goes away now and comes back only if this run ends clean.
-      # The Argus app labels it (Mentor's app has no pull request rights).
+      # Mentor's own app labels it, so mentor-ok shows as Mentor's.
       - name: Label token
         id: label
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.ARGUS_APP_ID }}
-          private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
+          app-id: ${{ secrets.MENTOR_APP_ID }}
+          private-key: ${{ secrets.MENTOR_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-pull-requests: write
@@ -334,13 +334,13 @@ jobs:
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       # mentor-ok says "the screenshots and the sheet of this PR are done and clean", for the
       # automerge workflow: it goes away now and comes back only if this run ends clean.
-      # The Argus app labels it (Mentor's app has no pull request rights).
+      # Mentor's own app labels it, so mentor-ok shows as Mentor's.
       - name: Label token
         id: label
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.ARGUS_APP_ID }}
-          private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
+          app-id: ${{ secrets.MENTOR_APP_ID }}
+          private-key: ${{ secrets.MENTOR_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-pull-requests: write
@@ -550,13 +550,13 @@ jobs:
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       # mentor-ok says "the screenshots and the sheet of this PR are done and clean", for the
       # automerge workflow: the sheet job dropped it, it comes back only if this run ends clean.
-      # The Argus app labels it (Mentor's app has no pull request rights).
+      # Mentor's own app labels it, so mentor-ok shows as Mentor's.
       - name: Label token
         id: label
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.ARGUS_APP_ID }}
-          private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
+          app-id: ${{ secrets.MENTOR_APP_ID }}
+          private-key: ${{ secrets.MENTOR_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-pull-requests: write
