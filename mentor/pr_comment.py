@@ -13,7 +13,8 @@ Pull requests: write).
 Folosire (din rădăcina repo-ului suitei, după jobul sheet):
     python3 pr_comment.py <owner/repo> <nr_pr> <ramura> <sha_pr> <raport.json> <verificare.json>
 Mediu: SCREENSHOTS (rezultatul jobului screenshots), SHOTS_COMMIT (al jobului
-screenshots-commit), RUN_URL.
+screenshots-commit), RUN_URL. Cu MODE=review (jobul review) raportul e `.mentor-precheck.json`
+(`sheet` spune dacă modulul are fișă) și comentariul spune ce lipsește din fișe, nu ce s-a refăcut.
 """
 from __future__ import annotations
 
@@ -93,16 +94,19 @@ def build(repo: str, pr_sha: str, head: str, report: list, verify: list,
     screenshots = os.environ.get("SCREENSHOTS", "")
     shots_commit = os.environ.get("SHOTS_COMMIT", "")
     run_url = os.environ.get("RUN_URL", "")
+    review = os.environ.get("MODE") == "review"
     reports = {r.get("module"): r for r in report if isinstance(r, dict)}
     verifies = {v.get("module"): v for v in verify if isinstance(v, dict)}
     sheet_modules = {f.split("/", 1)[0] for f in sheets}
     modules = sorted(set(reports) | set(verifies) | sheet_modules | {f.split("/", 1)[0] for f in shots})
 
-    lines = [MARKER, "## Mentor", ""]
+    lines = [MARKER, "## Mentor review" if review else "## Mentor", ""]
     serious = 0
     for module in modules:
         r, v = reports.get(module, {}), verifies.get(module)
-        if module in sheet_modules:
+        if review:
+            status = "fișă verificată" if r.get("sheet") else "fișă lipsă"
+        elif module in sheet_modules:
             status = "fișă făcută" if r.get("action") == "create" else "fișă actualizată"
         elif r or v:
             status = "fișă neschimbată"
@@ -143,13 +147,19 @@ def build(repo: str, pr_sha: str, head: str, report: list, verify: list,
     if failed:
         lines += [f"⚠️ Au eșuat: {', '.join(failed)}. Detalii în [rulare]({run_url}).", ""]
     if not modules and not failed:
-        lines += [f"Nimic de refăcut la `{pr_sha[:9]}`: fișele și capturile urmează deja codul.", ""]
+        lines += [f"Nimic de verificat la `{pr_sha[:9]}`: PR-ul nu schimbă funcțional niciun modul." if review
+                  else f"Nimic de refăcut la `{pr_sha[:9]}`: fișele și capturile urmează deja codul.", ""]
+    elif serious and review:
+        lines += [f"Rămân **{serious}** constatări critice sau majore: fără `mentor-ok`, merge manual. "
+                  "Fișa se face sau se completează local cu Mentor (`fisa-completa`), cu capturile, "
+                  "și se împinge în PR.", ""]
     elif serious:
         lines += [f"Rămân **{serious}** constatări critice sau majore: fără `mentor-ok`, merge manual.", ""]
     elif not failed:
         lines += ["Fără constatări critice sau majore.", ""]
+    after = "" if review else f" · ramura după Mentor: `{head[:9]}`"
     lines.append(f"<sub>Rularea: [{run_url.rsplit('/', 1)[-1] or 'Actions'}]({run_url}) · "
-                 f"push-ul verificat: `{pr_sha[:9]}` · ramura după Mentor: `{head[:9]}`</sub>")
+                 f"push-ul verificat: `{pr_sha[:9]}`{after}</sub>")
     return "\n".join(lines) + "\n", bool(modules or failed)
 
 

@@ -6,13 +6,14 @@ made once and reaches every suite.
 | Agent | What it does | Workflow |
 |---|---|---|
 | Argus | Advisory AI review of every PR, drafts included; never blocks the merge. A draft with no blocking or important issue goes to Ready by itself (label `wip` keeps it a draft) | `.github/workflows/argus.yml` |
-| Mentor | As the fisa-completa skill, in three jobs: writes or updates the consultant sheet of the modules a PR changes functionally, regenerates the screenshots whose screens changed or that the sheet calls for (view, wizard or OWL XML, the screenshot test, new steps in the sheet), then has the sheet audited against them, up to three rounds of fixes; all as commits on the PR, with the report as one PR comment | `.github/workflows/mentor.yml` |
+| Mentor | `mode: review` (default): checks that each module the PR changes functionally has its consultant sheet, with the fisa-modul structure and a step for each change (`review_check.py` without AI, then one read-only Claude session), in one light job: no Odoo, nothing committed, the report as one PR comment and `mentor-ok` when clean. `mode: full`: as the fisa-completa skill, in three jobs: writes or updates the consultant sheet of the modules a PR changes functionally, regenerates the screenshots whose screens changed or that the sheet calls for (view, wizard or OWL XML, the screenshot test, new steps in the sheet), then has the sheet audited against them, up to three rounds of fixes; all as commits on the PR, with the report as one PR comment | `.github/workflows/mentor.yml` |
 | Automerge | Merges a PR labelled `automerge` once Argus is clean (`argus-ok`), Mentor is done and clean (`mentor-ok`), nothing runs on its branch and every run on its head passed; `wip`, `needs-pacioli` and `no-merge` stop it. No AI | `.github/workflows/automerge.yml` |
 
 Both are reusable workflows (`workflow_call`), run on the self-hosted runners of the
-organization: the light jobs (Argus, Mentor's sheet, the screenshots commit) on the ones
-labelled `agents`, kept for the agents, and Mentor's screenshots (Odoo + Chrome) on the
-`odoo` ones, with the tests. A suite outside the organization (`dhongu/deltatech`) passes
+organization: the light jobs (Argus, Mentor's review, Mentor's sheet, the screenshots commit) on
+the ones labelled `agents`, kept for the agents, and Mentor's screenshots (Odoo + Chrome, `mode:
+full` only) on the `odoo` ones, with the tests. A suite passes `mode: full` to have Mentor write
+the sheets and regenerate the screenshots again. A suite outside the organization (`dhongu/deltatech`) passes
 `runs-on: '"ubuntu-latest"'` and runs them on its own GitHub-hosted minutes.
 It also passes the secrets by name (`secrets: inherit` only works inside the organization).
 
@@ -51,7 +52,7 @@ reviewed or what Mentor commits.
 
 - `argus/`: `comment.sh` and `needs-pacioli.sh` (the only writes Argus may make),
   `verdict.sh` (the counts; a workflow step, not Argus, moves the draft)
-- `mentor/`: `select_modules.py`, `push_commit.py`, `push_screenshots.py`, `pr_comment.py`,
+- `mentor/`: `select_modules.py`, `review_check.py` (the review's checks without AI), `push_commit.py`, `push_screenshots.py`, `pr_comment.py`,
   `show_sessions.py`, `carry_result.py`
 
 The rules themselves (Argus's `REVIEW.md`, Mentor's `MENTOR.md`) are not here: they live in

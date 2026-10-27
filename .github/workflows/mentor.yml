@@ -1,9 +1,13 @@
 name: mentor
 
-# Mentor, called by .github/workflows/mentor.yml of each suite (which sets the triggers):
-# when a PR changes a module functionally, it writes or updates the module's consultant
-# sheet (readme/FISA_CONSULTANT.md) and regenerates its screenshots, as Mentor commits on
-# the same PR. Scripts come from this repository and the rules (ci-agents/mentor/MENTOR.md)
+# Mentor, called by .github/workflows/mentor.yml of each suite (which sets the triggers).
+# Two modes, by the `mode` input:
+#   review (default)  checks that each module the PR changes functionally has its consultant
+#                     sheet (readme/FISA_CONSULTANT.md), complete and with a step for each change:
+#                     one light job, no Odoo, nothing committed, the report as a PR comment.
+#   full              writes or updates the sheet and regenerates its screenshots, as Mentor
+#                     commits on the same PR (sheet, screenshots, sheet-check), as fisa-completa.
+# Scripts come from this repository and the rules (ci-agents/mentor/MENTOR.md)
 # from the private terrabit-solutions/terrabit-claude, so a PR cannot change them. Label a PR "mentor-skip" to leave it alone.
 #
 # The suite provides two scripts on its base branch, for the screenshots job:
@@ -13,6 +17,13 @@ name: mentor
 on:
   workflow_call:
     inputs:
+      mode:
+        description: >-
+          "review": only checks the sheets (exists, complete, a step for each change), one light
+          job. "full": writes the sheets and regenerates the screenshots (Odoo + Chrome on the
+          "odoo" runners), as fisa-completa.
+        type: string
+        default: review
       agents-ref:
         description: Branch or tag of terrabit-solutions/ci-agents for the scripts (the rules follow terrabit-claude main).
         type: string
@@ -59,6 +70,230 @@ permissions:
   contents: read
 
 jobs:
+  review:
+    # Mentor review (mode "review", the default): checks the sheets, writes nothing on the PR.
+    # For each module the PR changes functionally: review_check.py checks without AI that the
+    # sheet exists and has the fisa-modul structure (sections 1-11, a screenshot on every step,
+    # the screenshots it refers to present), then one read-only Claude session checks that its
+    # steps cover what the PR changes. The report goes in the PR comment and mentor-ok comes
+    # only without critical or major findings. One job on the "agents" runners: no Odoo, no
+    # Chrome, no commit. The sheet itself is made locally, with Mentor (fisa-completa).
+    if: >-
+      inputs.mode != 'full' &&
+      !github.event.pull_request.draft &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !contains(github.event.pull_request.labels.*.name, 'mentor-skip')
+    concurrency:
+      group: mentor-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    runs-on: ${{ fromJSON(inputs.runs-on || '["self-hosted", "linux", "agents"]') }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          # Claude may read the workspace: keep the token out of .git/config.
+          persist-credentials: false
+      # mentor-ok says "the sheets of this PR are there and complete", for the automerge
+      # workflow: it goes away now and comes back only if this run ends clean.
+      # The Argus app labels it (Mentor's app has no pull request rights).
+      - name: Label token
+        id: label
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.ARGUS_APP_ID }}
+          private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-pull-requests: write
+      - name: Drop mentor-ok until this run is done
+        env:
+          GH_TOKEN: ${{ steps.label.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        # curl, not gh: the VPS runners have no gh.
+        run: |
+          curl -fsS -o /dev/null -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/mentor-ok" 2>/dev/null || true
+      - name: Checkout the Mentor scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: terrabit-solutions/ci-agents
+          ref: ${{ inputs.agents-ref }}
+          path: .ci-agents
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: mentor
+      - name: Modules whose sheet must follow the PR
+        id: select
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          base=$(git merge-base "$BASE" "$HEAD")
+          python3 -I .ci-agents/mentor/select_modules.py "$base" "$HEAD" \
+            mentor-terrabit --limit 10 > "$RUNNER_TEMP/selection.json"
+          python3 - "$RUNNER_TEMP/selection.json" <<'EOF'
+          import json, os, sys
+          data = json.load(open(sys.argv[1]))
+          json.dump(data["selected"], open(".mentor-modules.json", "w"), ensure_ascii=False, indent=2)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"count={len(data['selected'])}\n")
+          lines = [f"- `{m['module']}`: {m['reason']}" for m in data["selected"]]
+          lines += [f"- `{m}`: lăsat pentru un push următor (cel mult 10 module pe rulare)" for m in data["skipped"]]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
+              fh.write("## Mentor review\n\n" + ("\n".join(lines) or "Nicio fișă de verificat.") + "\n\n")
+          EOF
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+      # Without AI: the sheet exists, its sections, a screenshot on every step, the screenshots
+      # present. Claude runs only for the modules that have a sheet.
+      - name: Check the sheets without AI
+        id: precheck
+        if: steps.select.outputs.count != '0'
+        env:
+          BASE: ${{ steps.select.outputs.base }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 -I .ci-agents/mentor/review_check.py check "$BASE" "$HEAD" .mentor-modules.json \
+            > .mentor-precheck.json
+          sheets=$(python3 -c 'import json;print(sum(1 for m in json.load(open(".mentor-precheck.json")) if m["sheet"]))')
+          echo "sheets=$sheets" >> "$GITHUB_OUTPUT"
+      # Argus Terrabit app (read-only): the Terrabit plugin, with the fisa-modul skill and
+      # Mentor's rules.
+      - name: Read token
+        id: read
+        if: steps.precheck.outputs.sheets > 0
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.ARGUS_APP_ID }}
+          private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
+          owner: terrabit-solutions
+          repositories: terrabit-claude
+          permission-contents: read
+      - name: Checkout the Terrabit plugin
+        if: steps.precheck.outputs.sheets > 0
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: terrabit-solutions/terrabit-claude
+          ref: main
+          token: ${{ steps.read.outputs.token }}
+          path: .mentor/plugin
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: |
+            plugins/terrabit-odoo/skills/fisa-modul
+            ci-agents/mentor
+      # As in the sheet job: the skill and the rules under .mentor/, from terrabit-claude main,
+      # and the PR diff on the selected modules, so Claude needs no git command.
+      - name: Prepare Mentor
+        if: steps.precheck.outputs.sheets > 0
+        env:
+          BASE: ${{ steps.select.outputs.base }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          cp -r .mentor/plugin/plugins/terrabit-odoo/skills/fisa-modul .mentor/fisa-modul
+          cp .mentor/plugin/ci-agents/mentor/MENTOR.md .mentor/MENTOR.md
+          mods=$(python3 -c 'import json;print(" ".join(m["module"] for m in json.load(open(".mentor-modules.json"))))')
+          git diff "$BASE" "$HEAD" -- $mods > .mentor/pr.diff
+      # The action's own Bun setup needs `unzip`, which the runner lacks.
+      - name: Install Bun without unzip
+        if: steps.precheck.outputs.sheets > 0
+        id: bun
+        env:
+          BUN_VERSION: "1.4.4"
+          # From SHASUMS256.txt of the release.
+          BUN_SHA256: "bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c"
+        run: |
+          zip="$RUNNER_TOOL_CACHE/bun/bun-${BUN_VERSION}-linux-x64.zip"
+          mkdir -p "$(dirname "$zip")"
+          if ! echo "$BUN_SHA256  $zip" | sha256sum -c --status - 2>/dev/null; then
+            curl -fsSL -o "$zip" \
+              "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
+            echo "$BUN_SHA256  $zip" | sha256sum -c -
+          fi
+          python3 -m zipfile -e "$zip" "$RUNNER_TEMP/bun"
+          chmod +x "$RUNNER_TEMP/bun/bun-linux-x64/bun"
+          echo "path=$RUNNER_TEMP/bun/bun-linux-x64/bun" >> "$GITHUB_OUTPUT"
+      - name: Mentor reviewer - checks the steps against the PR
+        id: reviewer
+        if: steps.precheck.outputs.sheets > 0
+        uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          path_to_bun_executable: ${{ steps.bun.outputs.path }}
+          allowed_bots: argus-terrabit
+          prompt: |
+            Lucrezi ca Mentor pe PR-ul #${{ github.event.pull_request.number }}
+            (bază ${{ github.event.pull_request.base.sha }}). Citește întâi `.mentor/MENTOR.md`
+            și respectă-l întocmai; modulele și verificările fără AI sunt în `.mentor-precheck.json`.
+            Rolul tău: **recenzentul**. Nu modifici fișele; scrie `.mentor-review.json`.
+          claude_args: |
+            --model sonnet
+            --max-turns 60
+            --allowedTools "Read(./**),Grep(./**),Glob(./**),Edit(./.mentor-review.json),Write(./.mentor-review.json),Bash(ls:*)"
+            --disallowedTools "Read(~/.*),Read(~/.*/**),Read(~/runner-*/.*),Read(//etc/**),Read(//proc/**),Read(//root/**)"
+      - name: Keep the review session output
+        if: always() && steps.reviewer.outcome != 'skipped' && steps.reviewer.outcome != ''
+        run: cp "$RUNNER_TEMP/claude-execution-output.json" "$RUNNER_TEMP/mentor-review.json" 2>/dev/null || true
+      - name: The findings of both checks
+        if: "!cancelled() && steps.select.outputs.count != '0'"
+        run: |
+          python3 -I .ci-agents/mentor/review_check.py merge .mentor-precheck.json .mentor-review.json \
+            > .mentor-verify.json
+      - name: mentor-ok, if everything is clean
+        if: success()
+        env:
+          GH_TOKEN: ${{ steps.label.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          COUNT: ${{ steps.select.outputs.count }}
+        run: |
+          if [ "$COUNT" != 0 ]; then
+            left=$(python3 -c 'import json;print(sum(1 for m in json.load(open(".mentor-verify.json")) for f in m["findings"] if f.get("severity") in ("critic", "major")))')
+            if [ "$left" != 0 ]; then
+              echo "Findings left ($left): no mentor-ok, the merge stays manual."
+              exit 0
+            fi
+          fi
+          curl -fsS -o /dev/null -X POST -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" -d '{"labels":["mentor-ok"]}' \
+            "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels"
+          echo "Sheets there and complete: mentor-ok."
+      - name: Show what the Mentor session did
+        if: always() && steps.reviewer.outcome != 'skipped' && steps.reviewer.outcome != ''
+        run: python3 -I .ci-agents/mentor/show_sessions.py "$RUNNER_TEMP"
+      - name: Comment token
+        id: comment
+        if: always() && !cancelled()
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.MENTOR_APP_ID }}
+          private-key: ${{ secrets.MENTOR_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-pull-requests: write
+      - name: No comment token
+        if: always() && !cancelled() && steps.comment.outcome == 'failure'
+        run: echo "::warning::Mentor's app has no Pull requests write permission yet; no PR comment."
+      - name: Mentor's report on the PR
+        if: always() && !cancelled() && steps.comment.outcome == 'success'
+        continue-on-error: true
+        env:
+          MENTOR_TOKEN: ${{ steps.comment.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BRANCH: ${{ github.head_ref }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          MODE: review
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 -I .ci-agents/mentor/pr_comment.py "$REPO" "$PR_NUMBER" "$BRANCH" "$PR_SHA" \
+            .mentor-precheck.json .mentor-verify.json | tee -a "$GITHUB_STEP_SUMMARY"
+
   sheet:
     # Phase 1 of 3, as the fisa-completa skill: the author writes the sheet, the screenshots
     # job renders the screens it calls for, then sheet-check audits the sheet against them.
@@ -66,6 +301,7 @@ jobs:
     # Argus moves to Ready carries Argus's app as sender (and actor): the action refuses
     # bots, so each claude-code-action step below lists argus-terrabit in allowed_bots.
     if: >-
+      inputs.mode == 'full' &&
       !github.event.pull_request.draft &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       (github.event.action != 'synchronize' || github.event.sender.login != 'mentor-terrabit[bot]') &&
@@ -728,6 +964,7 @@ jobs:
     needs: sheet
     # Whatever the sheet job did (failed, or skipped on a draft): the screens still follow the code.
     if: >-
+      inputs.mode == 'full' &&
       !cancelled() &&
       !github.event.pull_request.draft &&
       github.event.pull_request.head.repo.full_name == github.repository &&
@@ -1153,6 +1390,7 @@ jobs:
   # screenshots for instance. This job carries that run's result onto Mentor's commit.
   carry:
     if: >-
+      inputs.mode == 'full' &&
       github.event.action == 'synchronize' &&
       github.event.sender.login == 'mentor-terrabit[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository
