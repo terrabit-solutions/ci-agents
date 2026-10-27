@@ -15,6 +15,9 @@ Folosire (din rădăcina repo-ului suitei, după jobul sheet):
 Mediu: SCREENSHOTS (rezultatul jobului screenshots), SHOTS_COMMIT (al jobului
 screenshots-commit), RUN_URL. Cu MODE=review (jobul review) raportul e `.mentor-precheck.json`
 (`sheet` spune dacă modulul are fișă) și comentariul spune ce lipsește din fișe, nu ce s-a refăcut.
+În modul review raportul e un review „comment” pe push-ul verificat, ca la Argus: Mentor apare
+la Reviewers și la fiecare push, chiar și când n-are nimic de verificat. Nu aprobă și nu cere
+modificări. Un review existent pe același push e rescris, nu dublat.
 """
 from __future__ import annotations
 
@@ -163,8 +166,38 @@ def build(repo: str, pr_sha: str, head: str, report: list, verify: list,
     return "\n".join(lines) + "\n", bool(modules or failed)
 
 
+def find_review(repo: str, number: str, pr_sha: str) -> dict | None:
+    page = 1
+    while True:
+        reviews = api("GET", f"/repos/{repo}/pulls/{number}/reviews?per_page=100&page={page}")
+        for review in reviews:
+            if (review.get("user") or {}).get("login") == BOT and review.get("commit_id") == pr_sha \
+                    and MARKER in (review.get("body") or ""):
+                return review
+        if len(reviews) < 100:
+            return None
+        page += 1
+
+
+def post_review(repo: str, number: str, pr_sha: str, report_path: str, verify_path: str) -> None:
+    """The review job: Mentor commits nothing, so the branch is not read (the token has no
+    Contents permission); the report goes as a "comment" review on the pushed head."""
+    body, _anything = build(repo, pr_sha, pr_sha, load(report_path), load(verify_path), [], [])
+    existing = find_review(repo, number, pr_sha)
+    if existing:
+        api("PUT", f"/repos/{repo}/pulls/{number}/reviews/{existing['id']}", {"body": body})
+        print(f"Review-ul Mentor actualizat: {existing['html_url']}")
+    else:
+        created = api("POST", f"/repos/{repo}/pulls/{number}/reviews",
+                      {"commit_id": pr_sha, "event": "COMMENT", "body": body})
+        print(f"Review-ul Mentor adăugat: {created['html_url']}")
+
+
 def main() -> None:
     repo, number, branch, pr_sha, report_path, verify_path = sys.argv[1:7]
+    if os.environ.get("MODE") == "review":
+        post_review(repo, number, pr_sha, report_path, verify_path)
+        return
     head, files = mentor_changes(repo, pr_sha, branch)
     if files is None:
         print(f"{branch} moved past {pr_sha[:9]}: the next run writes the comment.")
