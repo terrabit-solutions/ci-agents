@@ -221,6 +221,22 @@ jobs:
           python3 -m zipfile -e "$zip" "$RUNNER_TEMP/bun"
           chmod +x "$RUNNER_TEMP/bun/bun-linux-x64/bun"
           echo "path=$RUNNER_TEMP/bun/bun-linux-x64/bun" >> "$GITHUB_OUTPUT"
+      # claude-code-action posts the inline comments of the review in its post step with
+      # its github_token, and the caller's workflow gives GITHUB_TOKEN only contents: read
+      # (a reusable workflow cannot raise it): Mentor's app token does it, else the run
+      # keeps GITHUB_TOKEN and the inline comments are the only thing lost.
+      - name: Review token
+        id: reviewtoken
+        if: steps.precheck.outputs.sheets > 0
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.MENTOR_APP_ID }}
+          private-key: ${{ secrets.MENTOR_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
+          permission-pull-requests: write
       - name: Mentor reviewer - checks the steps against the PR
         id: reviewer
         if: steps.precheck.outputs.sheets > 0
@@ -229,7 +245,7 @@ jobs:
           HOME: ${{ runner.temp }}/claude-home
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ steps.reviewtoken.outputs.token || secrets.GITHUB_TOKEN }}
           path_to_bun_executable: ${{ steps.bun.outputs.path }}
           allowed_bots: argus-terrabit
           prompt: |
