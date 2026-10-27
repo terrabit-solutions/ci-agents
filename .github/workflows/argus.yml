@@ -63,7 +63,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           # Argus may read the workspace: keep the token out of .git/config.
@@ -104,7 +104,7 @@ jobs:
           chmod +x "$RUNNER_TEMP/bun/bun-linux-x64/bun"
           echo "path=$RUNNER_TEMP/bun/bun-linux-x64/bun" >> "$GITHUB_OUTPUT"
       - name: Checkout Odoo core (odoo/ only, to check the ORM API)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: odoo/odoo
           ref: ${{ inputs.odoo-version }}
@@ -150,7 +150,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: gh api -X DELETE "repos/$REPO/issues/$PR_NUMBER/labels/argus-ok" --silent 2>/dev/null || true
       - name: Checkout the shared Argus scripts
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: terrabit-solutions/ci-agents
           ref: ${{ inputs.agents-ref }}
@@ -182,7 +182,7 @@ jobs:
           echo "::error::The app token still does not see $REPO after 3 minutes."
           exit 1
       - name: Checkout the shared Argus rules
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: terrabit-solutions/terrabit-claude
           ref: main
@@ -193,7 +193,7 @@ jobs:
           sparse-checkout: ci-agents/argus
       # The suite's own rules, from its base branch: the PR cannot change them.
       - name: Checkout the suite's rules from the base branch
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: .argus-base
@@ -215,7 +215,7 @@ jobs:
       # tb-odoo-lint (Python stdlib only) at a fixed commit, v1.5.0.
       - name: Checkout tb-odoo-lint
         if: inputs.lint
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dhongu/terrabit-pre-commit-hooks
           ref: 9aea6d5acb3560a6ab13e43ec7ee421dc76461ae # v1.5.0

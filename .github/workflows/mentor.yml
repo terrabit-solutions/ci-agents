@@ -89,7 +89,7 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runs-on || '["self-hosted", "linux", "agents"]') }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -118,7 +118,7 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/mentor-ok" 2>/dev/null || true
       - name: Checkout the Mentor scripts
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: terrabit-solutions/ci-agents
           ref: ${{ inputs.agents-ref }}
@@ -174,7 +174,7 @@ jobs:
           permission-contents: read
       - name: Checkout the Terrabit plugin
         if: steps.precheck.outputs.sheets > 0
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: terrabit-solutions/terrabit-claude
           ref: main
@@ -341,7 +341,7 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runs-on || '["self-hosted", "linux", "agents"]') }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -384,7 +384,7 @@ jobs:
           repositories: l10n_ro_ent,terrabit-claude
           permission-contents: read
       - name: Checkout the Mentor scripts
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: terrabit-solutions/ci-agents
           ref: ${{ inputs.agents-ref }}
@@ -413,7 +413,7 @@ jobs:
           EOF
       - name: Checkout the RO accounting reference
         if: steps.select.outputs.count != '0'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: terrabit-solutions/l10n_ro_ent
           ref: ${{ inputs.odoo-version }}
@@ -426,7 +426,7 @@ jobs:
             l10n_ro_advance_invoice/readme
       - name: Checkout the Terrabit plugin
         if: steps.select.outputs.count != '0'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: terrabit-solutions/terrabit-claude
           ref: main
@@ -560,7 +560,7 @@ jobs:
     timeout-minutes: 120
     steps:
       # The branch as the sheet and the screenshots left it: their Mentor commits included.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.head_ref }}
           fetch-depth: 0
@@ -592,7 +592,7 @@ jobs:
           repositories: l10n_ro_ent,terrabit-claude
           permission-contents: read
       - name: Checkout the Mentor scripts
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: terrabit-solutions/ci-agents
           ref: ${{ inputs.agents-ref }}
@@ -622,7 +622,7 @@ jobs:
           echo "count=${COUNT:-0}" >> "$GITHUB_OUTPUT"
       - name: Checkout the RO accounting reference
         if: steps.select.outputs.count != '0'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: terrabit-solutions/l10n_ro_ent
           ref: ${{ inputs.odoo-version }}
@@ -635,7 +635,7 @@ jobs:
             l10n_ro_advance_invoice/readme
       - name: Checkout the Terrabit plugin
         if: steps.select.outputs.count != '0'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: terrabit-solutions/terrabit-claude
           ref: main
@@ -1035,7 +1035,7 @@ jobs:
           --tmpfs /var/lib/postgresql/data:rw,size=4g
           --shm-size=512m
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.sheet.outputs.head || github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -1051,7 +1051,7 @@ jobs:
           repositories: l10n_ro_ent
           permission-contents: read
       - name: Checkout the Mentor scripts
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: terrabit-solutions/ci-agents
           ref: ${{ inputs.agents-ref }}
@@ -1365,13 +1365,13 @@ jobs:
     container:
       image: ${{ format('ghcr.io/oca/oca-ci/py{0}-odoo{1}:latest', inputs.odoo-version == '19.0' && '3.10' || '3.12', inputs.odoo-version) }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.sheet.outputs.head || github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Checkout the Mentor scripts
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: terrabit-solutions/ci-agents
           ref: ${{ inputs.agents-ref }}
@@ -1435,7 +1435,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout the Mentor scripts
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: terrabit-solutions/ci-agents
           ref: ${{ inputs.agents-ref }}
