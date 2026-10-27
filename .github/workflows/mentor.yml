@@ -88,11 +88,6 @@ jobs:
       cancel-in-progress: true
     runs-on: ${{ fromJSON(inputs.runs-on || '["self-hosted", "linux", "agents"]') }}
     timeout-minutes: 30
-    # claude-code-action posts the inline comments of the review in its post step, with
-    # GITHUB_TOKEN: without pull-requests it gets 403 and the job fails.
-    permissions:
-      contents: read
-      pull-requests: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
