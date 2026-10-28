@@ -372,8 +372,9 @@ jobs:
           curl -fsS -o /dev/null -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/mentor-ok" 2>/dev/null || true
-      # Argus Terrabit app (read-only): this repository, the RO accounting reference and the
-      # Terrabit plugin with the fisa-modul skill, the verificator-fisa agent and Mentor's rules.
+      # Argus Terrabit app (read-only): this repository, the RO accounting reference (pacioli), the
+      # model sheet (l10n_ro_ent) and the Terrabit plugin with the fisa-modul skill, the
+      # verificator-fisa agent and Mentor's rules.
       - name: Read token
         id: read
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -381,7 +382,7 @@ jobs:
           client-id: Iv23liGeN7tupqZ8jQoZ # Argus Terrabit, public Client ID
           private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
           owner: terrabit-solutions
-          repositories: l10n_ro_ent,terrabit-claude
+          repositories: l10n_ro_ent,pacioli,terrabit-claude
           permission-contents: read
       - name: Checkout the Mentor scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -411,7 +412,19 @@ jobs:
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
               fh.write("## Mentor\n\n" + ("\n".join(lines) or "Nicio fișă de făcut sau de actualizat.") + "\n\n")
           EOF
+      # the references of Pacioli do not depend on the Odoo version: one branch, main
       - name: Checkout the RO accounting reference
+        if: steps.select.outputs.count != '0'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: terrabit-solutions/pacioli
+          ref: main
+          token: ${{ steps.read.outputs.token }}
+          path: .mentor/pacioli
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: skills/contabilitate-ro
+      - name: Checkout the model sheet
         if: steps.select.outputs.count != '0'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -421,9 +434,7 @@ jobs:
           path: odoo-addons/l10n_ro_ent
           fetch-depth: 1
           persist-credentials: false
-          sparse-checkout: |
-            skills/contabilitate-ro
-            l10n_ro_advance_invoice/readme
+          sparse-checkout: l10n_ro_advance_invoice/readme
       - name: Checkout the Terrabit plugin
         if: steps.select.outputs.count != '0'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -580,8 +591,9 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-pull-requests: write
-      # Argus Terrabit app (read-only): this repository, the RO accounting reference and the
-      # Terrabit plugin with the fisa-modul skill, the verificator-fisa agent and Mentor's rules.
+      # Argus Terrabit app (read-only): this repository, the RO accounting reference (pacioli), the
+      # model sheet (l10n_ro_ent) and the Terrabit plugin with the fisa-modul skill, the
+      # verificator-fisa agent and Mentor's rules.
       - name: Read token
         id: read
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -589,7 +601,7 @@ jobs:
           client-id: Iv23liGeN7tupqZ8jQoZ # Argus Terrabit, public Client ID
           private-key: ${{ secrets.ARGUS_APP_PRIVATE_KEY }}
           owner: terrabit-solutions
-          repositories: l10n_ro_ent,terrabit-claude
+          repositories: l10n_ro_ent,pacioli,terrabit-claude
           permission-contents: read
       - name: Checkout the Mentor scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -620,7 +632,19 @@ jobs:
             exit 0
           fi
           echo "count=${COUNT:-0}" >> "$GITHUB_OUTPUT"
+      # the references of Pacioli do not depend on the Odoo version: one branch, main
       - name: Checkout the RO accounting reference
+        if: steps.select.outputs.count != '0'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: terrabit-solutions/pacioli
+          ref: main
+          token: ${{ steps.read.outputs.token }}
+          path: .mentor/pacioli
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: skills/contabilitate-ro
+      - name: Checkout the model sheet
         if: steps.select.outputs.count != '0'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -630,9 +654,7 @@ jobs:
           path: odoo-addons/l10n_ro_ent
           fetch-depth: 1
           persist-credentials: false
-          sparse-checkout: |
-            skills/contabilitate-ro
-            l10n_ro_advance_invoice/readme
+          sparse-checkout: l10n_ro_advance_invoice/readme
       - name: Checkout the Terrabit plugin
         if: steps.select.outputs.count != '0'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
