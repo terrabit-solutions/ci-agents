@@ -236,6 +236,10 @@ jobs:
         env:
           HOME: ${{ runner.temp }}/claude-home
         with:
+          # Post inline comments at once, unbuffered: the action's buffer, a fixed
+          # /tmp/inline-comments-buffer.jsonl, outlives the job on our persistent
+          # runners and every later run (Mentor's too) replayed it on its own PR.
+          classify_inline_comments: "false"
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.app.outputs.token }}
           path_to_bun_executable: ${{ steps.bun.outputs.path }}
