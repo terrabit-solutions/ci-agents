@@ -282,6 +282,13 @@ jobs:
             tipar. Scriptul refuză liniile șterse și tiparele pe care PR-ul doar le șterge, și nu
             repostează un fir existent. Un refuz nu se reia și nu se numără în rezumat; un
             „deja comentat” se numără doar dacă problema e încă reală, fără alt apel.
+
+            Comenzile Bash sunt permise doar în forma exactă din listă: o singură comandă pe apel,
+            cu calea relativă (`.argus/comment.sh`, `.argus/inline.py`, `.argus/verdict.sh`, nu
+            `/home/runner/...`), fără `cd`, `;`, `&&`, `|`, `>` sau `$(...)`. Diff-ul îl citești
+            cu `gh pr diff <nr>` direct, iar fișierele cu uneltele Read/Grep/Glob. O comandă
+            refuzată nu se reia sub altă formă compusă. Review-ul se încheie întotdeauna cu
+            `.argus/verdict.sh`, chiar dacă n-ai găsit nimic.
           # The runner is persistent: file tools are limited to the job
           # workspace (repo + .odoo-src), and the runner's home dotfiles,
           # its credentials and system paths are denied outright.
@@ -343,8 +350,12 @@ jobs:
           }
           verdict="$RUNNER_TEMP/argus-verdict"
           if [ ! -s "$verdict" ]; then
-            echo "No verdict from Argus: no argus-ok, a draft stays a draft."
-            exit 0
+            # A run without verdict used to end green and the draft just stayed a draft, so
+            # nobody saw that the review had not happened (deltatech#3871, 29.10: Claude's
+            # comment.sh call was refused and it never reached verdict.sh). Fail, so the job
+            # is visibly red and can be re-run.
+            echo "::error::No verdict from Argus: no argus-ok, a draft stays a draft. Re-run the job."
+            exit 1
           fi
           read -r blocking important minor < "$verdict"
           echo "Argus: $blocking blocking, $important important, $minor minor."
