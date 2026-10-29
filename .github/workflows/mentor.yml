@@ -75,7 +75,8 @@ jobs:
     # For each module the PR changes functionally: review_check.py checks without AI that the
     # sheet exists and has the fisa-modul structure (sections 1-11, a screenshot on every step,
     # the screenshots it refers to present), then one read-only Claude session checks that its
-    # steps cover what the PR changes. The report goes in the PR comment and mentor-ok comes
+    # steps cover what the PR changes. The report goes as a PR review (Approve, Request changes
+    # on a critical finding, Comment otherwise) and mentor-ok comes
     # only without critical or major findings. One job on the "agents" runners: no Odoo, no
     # Chrome, no commit. The sheet itself is made locally, with Mentor (fisa-completa).
     if: >-
@@ -266,6 +267,7 @@ jobs:
           python3 -I .ci-agents/mentor/review_check.py merge .mentor-precheck.json .mentor-review.json \
             > .mentor-verify.json
       - name: mentor-ok, if everything is clean
+        id: verdict
         if: success()
         env:
           GH_TOKEN: ${{ steps.label.outputs.token }}
@@ -275,8 +277,9 @@ jobs:
         run: |
           if [ "$COUNT" != 0 ]; then
             left=$(python3 -c 'import json;print(sum(1 for m in json.load(open(".mentor-verify.json")) for f in m["findings"] if f.get("severity") in ("critic", "major")))')
+            echo "left=$left" >> "$GITHUB_OUTPUT"
             if [ "$left" != 0 ]; then
-              echo "Findings left ($left): no mentor-ok, the merge stays manual."
+              echo "Findings left ($left): no mentor-ok, the check fails after the report."
               exit 0
             fi
           fi
@@ -311,10 +314,22 @@ jobs:
           BRANCH: ${{ github.head_ref }}
           PR_SHA: ${{ github.event.pull_request.head.sha }}
           MODE: review
+          # Approve only when no step before failed (the reviewer session included).
+          JOB_OK: ${{ job.status == 'success' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           python3 -I .ci-agents/mentor/pr_comment.py "$REPO" "$PR_NUMBER" "$BRANCH" "$PR_SHA" \
             .mentor-precheck.json .mentor-verify.json | tee -a "$GITHUB_STEP_SUMMARY"
+      # Last, after the report: critical or major findings turn the check red, so a suite
+      # that makes "mentor / review" a required check blocks the merge (an admin can still
+      # bypass it), not only automerge through the missing mentor-ok.
+      - name: Fail while critical or major findings are left
+        if: always() && !cancelled() && steps.verdict.outputs.left != '' && steps.verdict.outputs.left != '0'
+        env:
+          LEFT: ${{ steps.verdict.outputs.left }}
+        run: |
+          echo "::error::Mentor: $LEFT critical or major findings left; make or complete the sheet with Mentor (fisa-completa) and push it to the PR."
+          exit 1
 
   sheet:
     # Phase 1 of 3, as the fisa-completa skill: the author writes the sheet, the screenshots
