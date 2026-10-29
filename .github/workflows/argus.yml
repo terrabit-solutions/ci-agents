@@ -211,7 +211,10 @@ jobs:
             cp .argus-base/.github/argus/REVIEW.local.md .argus/REVIEW.local.md
           fi
           rm -rf .argus-base .argus-rules .ci-agents
-          chmod +x .argus/*.sh
+          chmod +x .argus/*.sh .argus/inline.py
+          # The inline comment buffer of the action's older runs, replayed by every later run
+          # on this runner until now (see classify_inline_comments below).
+          rm -f /tmp/inline-comments-buffer.jsonl
       # tb-odoo-lint (Python stdlib only) at a fixed commit, v1.5.0.
       - name: Checkout tb-odoo-lint
         if: inputs.lint
@@ -249,9 +252,15 @@ jobs:
         uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
         env:
           HOME: ${{ runner.temp }}/claude-home
-          # Read by the .argus/*.sh scripts.
+          # Read by the .argus/ scripts.
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
         with:
+          # Post inline comments at once, unbuffered: the action's buffer, a fixed
+          # /tmp/inline-comments-buffer.jsonl, outlives the job on our persistent
+          # runners and every later run (Mentor's too) replayed it on its own PR.
+          classify_inline_comments: "false"
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.app.outputs.token }}
           path_to_bun_executable: ${{ steps.bun.outputs.path }}
@@ -262,13 +271,24 @@ jobs:
 
             Fă review-ul acestui PR după regulile din .argus/REVIEW.md.
             Citește întâi fișierul acela și respectă-l întocmai.
+
+            Comentariile pe linie le pui numai cu `.argus/inline.py` (unealta MCP de
+            comentarii inline nu mai e disponibilă), un apel pe problemă:
+            `.argus/inline.py --path <fișier> --line <n> --rule <regulă> --match '<cod>' --body '<text>'`
+            (`--start <n>` pentru un interval). `--rule` e un nume scurt și stabil al regulii
+            (ex. `o20-is-company`). `--match` e codul despre care e comentariul, exact cum apare
+            pe linie: trebuie să fie pe o linie pe care PR-ul o adaugă. Doar pentru o linie
+            neschimbată pe care schimbarea o strică adaugi `--context`, niciodată la regulile de
+            tipar. Scriptul refuză liniile șterse și tiparele pe care PR-ul doar le șterge, și nu
+            repostează un fir existent. Un refuz nu se reia și nu se numără în rezumat; un
+            „deja comentat” se numără doar dacă problema e încă reală, fără alt apel.
           # The runner is persistent: file tools are limited to the job
           # workspace (repo + .odoo-src), and the runner's home dotfiles,
           # its credentials and system paths are denied outright.
           claude_args: |
             --model sonnet
             --max-turns 40
-            --allowedTools "Read(./**),Grep(./**),Glob(./**),mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(.argus/comment.sh:*),Bash(.argus/needs-pacioli.sh),Bash(.argus/verdict.sh:*)"
+            --allowedTools "Read(./**),Grep(./**),Glob(./**),Bash(.argus/inline.py:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(.argus/comment.sh:*),Bash(.argus/needs-pacioli.sh),Bash(.argus/verdict.sh:*)"
             --disallowedTools "Read(~/.*),Read(~/.*/**),Read(~/runner-*/.*),Read(//etc/**),Read(//proc/**),Read(//root/**)"
       # A clean draft goes to Ready, which starts the tests and Mentor (events made with an
       # app token trigger workflows). Claude only reports the counts; this step decides, and

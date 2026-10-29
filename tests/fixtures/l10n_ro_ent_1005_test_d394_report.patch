@@ -1,0 +1,520 @@
+@@ -1,9 +1,12 @@
++import io
+ from datetime import timedelta
++from unittest.mock import patch
+ 
+ from lxml import etree
+ 
+-from odoo import fields
++from odoo import Command, fields
+ from odoo.tests import tagged
++from odoo.tools import file_open, mute_logger
+ 
+ from odoo.addons.l10n_ro_anaf_base.models import anaf_declaration_profile as _profile_registry
+ from odoo.addons.l10n_ro_anaf_base.tests.common import AnafTestCommon
+@@ -14,7 +17,7 @@ class TestD394Report(AnafTestCommon):
+     # CUI valid (checksum RO corect) pentru partenerii de tranzacție din teste —
+     # DISTINCT de CUI-ul companiei (RO20603502 din AnafTestCommon). Reutilizarea CUI-ului
+     # companiei pe un client/furnizor declanșa constrângerea de unicitate VAT/NRC din
+-    # l10n_ro_partner_unique (un al doilea res.partner is_company cu același CUI), de unde
++    # l10n_ro_partner_unique (un al doilea partener-firmă cu același CUI), de unde
+     # erorile „The VAT and NRC pair must be unique!". Un partener cu CUI propriu reflectă
+     # și realitatea: cealaltă parte de pe factură nu poate fi chiar compania declarantă.
+     TRADE_PARTNER_VAT = "RO10000008"
+@@ -36,7 +39,6 @@ def _ro_partner(self, vals):
+         iar înainte partenerul reutilizat moștenea adresa companiei.
+         """
+         vals = dict(vals)
+-        vals.setdefault("is_company", True)
+         vals.setdefault("country_id", self.env.ref("base.ro").id)
+         vals.setdefault("state_id", (self.state_ro or self.state_ab).id if (self.state_ro or self.state_ab) else False)
+         vals.setdefault("city", "Bucuresti")
+@@ -159,7 +161,6 @@ def test_d394_company_cui_in_xdp(self):
+     #             "name": "Deltatech SRL",
+     #             "vat": "RO20603502",
+     #             "country_id": self.env.ref("base.ro").id,
+-    #             "is_company": True,
+     #         }
+     #     )
+     #
+@@ -311,7 +312,6 @@ def test_local_purchase_vat_21(self):
+                 "state_id": self.state_ro.id if self.state_ro else False,
+                 "city": "Bucuresti",
+                 "street": "Str. Test 1",
+-                "is_company": True,
+             }
+         )
+ 
+@@ -522,7 +522,6 @@ def test_reverse_charge_sale(self):
+                 "name": "Client RC TC03",
+                 "vat": self.TRADE_PARTNER_VAT,
+                 "country_id": self.env.ref("base.ro").id,
+-                "is_company": True,
+             }
+         )
+         invoice = (
+@@ -596,7 +595,6 @@ def test_reverse_charge_purchase(self):
+                 "name": "Furnizor RC TC04",
+                 "vat": self.TRADE_PARTNER_VAT,
+                 "country_id": self.env.ref("base.ro").id,
+-                "is_company": True,
+             }
+         )
+         bill = (
+@@ -693,7 +691,6 @@ def test_caba_partial_payment(self):
+                 "name": "Client CABA TC05",
+                 "vat": self.TRADE_PARTNER_VAT,
+                 "country_id": self.env.ref("base.ro").id,
+-                "is_company": True,
+             }
+         )
+         invoice = (
+@@ -814,7 +811,6 @@ def test_caba_full_payment(self):
+                 "name": "Client CABA TC06",
+                 "vat": self.TRADE_PARTNER_VAT,
+                 "country_id": self.env.ref("base.ro").id,
+-                "is_company": True,
+             }
+         )
+         invoice = (
+@@ -940,7 +936,6 @@ def test_credit_note_storno(self):
+                 "state_id": self.state_ro.id if self.state_ro else False,
+                 "city": "Bucuresti",
+                 "street": "Str. Test 1",
+-                "is_company": True,
+             }
+         )
+ 
+@@ -1051,7 +1046,6 @@ def test_xlsx_export_dynamic_columns(self):
+                 "name": "Client XLSX TC08",
+                 "vat": self.TRADE_PARTNER_VAT,
+                 "country_id": self.env.ref("base.ro").id,
+-                "is_company": True,
+             }
+         )
+         inv = (
+@@ -1122,7 +1116,6 @@ def test_non_ro_partner_exclusion(self):
+             {
+                 "name": "German Client GmbH TC11",
+                 "country_id": self.env.ref("base.de").id,
+-                "is_company": True,
+             }
+         )
+ 
+@@ -1218,7 +1211,6 @@ def test_reconciliation_with_gl_accounts(self):
+                 "name": "Client GL TC12",
+                 "vat": self.TRADE_PARTNER_VAT,
+                 "country_id": self.env.ref("base.ro").id,
+-                "is_company": True,
+             }
+         )
+         inv = (
+@@ -1312,7 +1304,6 @@ def test_physical_person_no_vat(self):
+                 "state_id": self.state_ro.id if self.state_ro else False,
+                 "city": "Bucuresti",
+                 "street": "Str. Test 1",
+-                "is_company": False,
+             }
+         )
+         # Confirmăm că partenerul nu are VAT — aceasta determină rutarea în items2
+@@ -1410,7 +1401,6 @@ def test_multiple_vat_rates_reporting(self):
+                 "name": "Client Cote TC14",
+                 "vat": self.TRADE_PARTNER_VAT,
+                 "country_id": self.env.ref("base.ro").id,
+-                "is_company": True,
+             }
+         )
+ 
+@@ -1685,7 +1675,6 @@ def test_declaration_options_from_company(self):
+                 "name": "Client Optiuni TC18",
+                 "vat": self.TRADE_PARTNER_VAT,
+                 "country_id": self.env.ref("base.ro").id,
+-                "is_company": True,
+             }
+         )
+         invoice = (
+@@ -1729,109 +1718,299 @@ def test_declaration_options_from_company(self):
+             self.assertEqual(data["op_efectuate"], 1, "op_efectuate=1 cand exista operatiuni")
+ 
+     # ------------------------------------------------------------------
+-    # TC-19: info AI / intracomunitar (nrCui3/nrCui4/tvaDedAI) (backlog info)
++    # TC-19: tvaDedAI = TVA deductibilă de la furnizorii cu TVA la încasare (#891)
+     # ------------------------------------------------------------------
+ 
+-    def test_intracom_info_fields(self):
+-        """TC-19: achizitie intracomunitara → tvaDedAI pe cota.
+-
+-        nrCui3/nrCui4 NU se mai derivă din numărul de parteneri UE/non-UE: validatorul ANAF
+-        le cere egale cu numărul de parteneri din op1 cu tip_partener 3/4 (R124/R125), iar
+-        partenerii străini nu sunt raportați în op1 → rămân 0. Aici verificăm doar tvaDedAI.
+-        """
+-        rc_tax = self._find_purchase_tax(21, rc=True)
+-        expense_account = self._find_expense_account()
+-        if not rc_tax or not expense_account:
+-            self.skipTest("Nu exista taxa de achizitii RC 21% sau cont de cheltuieli in compania de test")
+-
+-        de = self.env.ref("base.de")
+-        us = self.env.ref("base.us")
+-        eu_vendor = (
+-            self.env["res.partner"]
+-            .with_context(no_vat_validation=True)
+-            .create({"name": "Furnizor DE TC19", "vat": "DE129273398", "country_id": de.id, "is_company": True})
+-        )
+-        non_eu_vendor = self.env["res.partner"].create(
+-            {"name": "Furnizor US TC19", "country_id": us.id, "is_company": True}
+-        )
+-
+-        # Achizitie intracomunitara de bunuri de la furnizor UE, cu autotaxare 9%.
+-        bill_eu = (
++    def _vendor_bill(self, partner, tax, price, date=None):
++        date = date or fields.Date.today()
++        bill = (
+             self.env["account.move"]
+             .sudo()
+             .create(
+                 {
+                     "move_type": "in_invoice",
+-                    "partner_id": eu_vendor.id,
++                    "partner_id": partner.id,
+                     "company_id": self.company.id,
+-                    "invoice_date": fields.Date.today(),
+-                    "date": fields.Date.today(),
++                    "invoice_date": date,
++                    "date": date,
+                     "invoice_line_ids": [
+-                        (
+-                            0,
+-                            0,
++                        Command.create(
+                             {
+-                                "name": "Bunuri intracom TC19",
++                                "name": "Achiziție TC19",
+                                 "quantity": 1,
+-                                "price_unit": 1000.0,
+-                                "account_id": expense_account.id,
+-                                "tax_ids": [(6, 0, rc_tax.ids)],
+-                            },
++                                "price_unit": price,
++                                "account_id": self._find_expense_account().id,
++                                "tax_ids": [Command.set(tax.ids)],
++                            }
+                         )
+                     ],
+                 }
+             )
+         )
+-        bill_eu.action_post()
++        bill.action_post()
++        return bill
++
++    def _pay(self, bill, date=None, amount=None):
++        vals = {"payment_date": date or fields.Date.today()}
++        if amount is not None:
++            vals.update(amount=amount, payment_difference_handling="open")
++        self.env["account.payment.register"].with_context(
++            active_model="account.move", active_ids=bill.ids
++        ).sudo().create(vals)._create_payments()
++
++    def _vat_on_collection_setup(self):
++        """Taxa de achiziții „TVA la încasare - 21% deductibil" și un furnizor RO care aplică sistemul."""
++        tax = self.env["account.tax"].search(
++            [
++                ("company_id", "=", self.company.id),
++                ("type_tax_use", "=", "purchase"),
++                ("tax_exigibility", "=", "on_payment"),
++                ("amount", "=", 21),
++            ],
++            limit=1,
++        )
++        if not tax or not self._find_expense_account():
++            self.skipTest("Lipsesc taxa de achiziții 21% la încasare sau contul de cheltuieli (localizare RO)")
++        self.company.tax_exigibility = True
++        vendor = self._ro_partner({"name": "Furnizor TVA la încasare TC19", "vat": self.TRADE_PARTNER_VAT})
++        return tax, vendor
++
++    def _tva_ded_ai(self, supplier_vat_on_payment=True):
++        """`tvaDedAI` cu regimul furnizorului fixat (istoricul ANAF din `l10n_ro_vat_on_payment`)."""
++        report = self.env.ref("l10n_ro_account_vat_journal.l10n_ro_purchase_tax_report")
++        handler = self.env["l10n_ro_account_vat_journal.purchase.tax.report.handler"].with_company(self.company)
++        with patch.object(
++            type(handler), "_is_d394_supplier_vat_on_payment", lambda self, bill: supplier_vat_on_payment
++        ):
++            return handler._collect_d394_vat_on_collection_info(self._make_options(report), self.company)
++
++    def test_tva_ded_ai_from_paid_vat_on_collection_bills(self):
++        """TC-19: tvaDedAI = TVA-ul facturilor de la furnizori cu TVA la încasare achitate în perioadă.
++
++        Structura D394 (rd. 139-142): „TVA deductibilă aferentă facturilor achitate în
++        perioada de raportare [...] primite de la persoane impozabile care aplică sistemul
++        de TVA la încasare". Factura neachitată nu intră.
++        """
++        tax, vendor = self._vat_on_collection_setup()
++        self.company.l10n_ro_anaf_d394_vat_on_collection = True
++        paid = self._vendor_bill(vendor, tax, 1000.0)
++        self._pay(paid)
++        self._vendor_bill(vendor, tax, 3000.0)
++
++        info = self._tva_ded_ai()
++
++        self.assertEqual(info["tvaDedAI21"], 210, "TVA-ul facturii achitate (1000 × 21%)")
++        self.assertEqual(info["tvaDedAI11"], 0)
++
++    def test_tva_ded_ai_partial_payment(self):
++        """TC-19e: plata parțială → TVA proporțional cu suma plătită (art. 282 alin. (8) CF).
+ 
+-        # Achizitie de la furnizor non-UE (pentru nrCui4).
+-        bill_us = (
++        Se numără doar linia de TVA a notei CABA (contul final 4426); linia pereche de pe
++        contul de tranziție (4428) nu are `tax_line_id`, deci suma nu se anulează.
++        """
++        tax, vendor = self._vat_on_collection_setup()
++        self.company.l10n_ro_anaf_d394_vat_on_collection = True
++        bill = self._vendor_bill(vendor, tax, 1000.0)
++        self._pay(bill, amount=bill.amount_total / 2)
++
++        info = self._tva_ded_ai()
++
++        self.assertEqual(info["tvaDedAI21"], 105, "Jumătate din TVA-ul facturii (1000 × 21% / 2)")
++
++    def test_d394_supplier_regime_without_patch(self):
++        """TC-19f: regimul furnizorului pe calea reală, fără patch.
++
++        Bifa `l10n_ro_vat_on_payment` (din `l10n_ro_anaf_partner` sau OCA) decide; cu OCA,
++        fără istoric ANAF, se citește la data facturii fără descărcare de la ANAF. Fără
++        câmp, regimul e necunoscut → normal.
++        """
++        tax, vendor = self._vat_on_collection_setup()
++        bill = self._vendor_bill(vendor, tax, 1000.0)
++        handler = self.env["l10n_ro_account_vat_journal.purchase.tax.report.handler"].with_company(self.company)
++        if "l10n_ro_vat_on_payment" not in vendor._fields:
++            self.assertIs(handler._is_d394_supplier_vat_on_payment(bill), False)
++            return
++        vendor.l10n_ro_vat_on_payment = False
++        self.assertIs(handler._is_d394_supplier_vat_on_payment(bill), False)
++        vendor.l10n_ro_vat_on_payment = True
++        if hasattr(vendor, "_insert_relevant_anaf_data"):
++            with patch.object(
++                type(vendor), "_insert_relevant_anaf_data", side_effect=AssertionError("descărcare ANAF")
++            ):
++                self.assertIs(handler._is_d394_supplier_vat_on_payment(bill), True)
++        else:
++            self.assertIs(handler._is_d394_supplier_vat_on_payment(bill), True)
++
++    def test_tva_ded_ai_excludes_normal_regime_suppliers(self):
++        """TC-19d: firmă cu TVA la încasare, furnizor în regim normal → nu e tvaDedAI.
++
++        Firma cu TVA la încasare își amână deducerea la toate achizițiile (art. 297 alin. (3)
++        CF), deci folosește taxe „la încasare" și la furnizorii în regim normal; TVA-ul lor
++        e rubrica `tvaDed`, nu `tvaDedAI`. Regimul furnizorului decide, nu taxa.
++        """
++        tax, vendor = self._vat_on_collection_setup()
++        self.company.l10n_ro_anaf_d394_vat_on_collection = True
++        self._pay(self._vendor_bill(vendor, tax, 1000.0))
++
++        info = self._tva_ded_ai(supplier_vat_on_payment=False)
++
++        self.assertFalse(any(info.values()), f"Furnizor în regim normal → tvaDed, nu tvaDedAI: {info}")
++
++    def test_tva_ded_ai_ignores_intracommunity_purchases(self):
++        """TC-19b: achiziția intracomunitară (taxare inversă) nu intră în tvaDedAI (#891)."""
++        rc_tax = self._find_purchase_tax(21, rc=True)
++        if not rc_tax or not self._find_expense_account():
++            self.skipTest("Nu exista taxa de achizitii RC 21% sau cont de cheltuieli in compania de test")
++        self.company.l10n_ro_anaf_d394_vat_on_collection = True
++        eu_vendor = (
++            self.env["res.partner"]
++            .with_context(no_vat_validation=True)
++            .create(
++                {
++                    "name": "Furnizor DE TC19",
++                    "vat": "DE129273398",
++                    "country_id": self.env.ref("base.de").id,
++                }
++            )
++        )
++        bill = self._vendor_bill(eu_vendor, rc_tax, 1000.0)
++        self._pay(bill)
++
++        info = self._tva_ded_ai()
++
++        self.assertFalse(any(info.values()), f"Achiziția intracomunitară nu e TVA la încasare: {info}")
++
++    def test_tva_ded_ai_zero_without_vat_on_collection(self):
++        """TC-19c: la sistemTVA=0 tvaDedAI e 0 (null în structură; D394Validator v5 cere atributul)."""
++        tax, vendor = self._vat_on_collection_setup()
++        self.company.l10n_ro_anaf_d394_vat_on_collection = False
++        bill = self._vendor_bill(vendor, tax, 1000.0)
++        self._pay(bill)
++
++        info = self._tva_ded_ai()
++
++        self.assertEqual(set(info), {f"tvaDedAI{r}" for r in (5, 9, 11, 19, 20, 21, 24)})
++        self.assertFalse(any(info.values()), f"sistemTVA=0 → tvaDedAI null/0: {info}")
++
++    # ------------------------------------------------------------------
++    # TC-21: XDP-ul (Soft A) conține facturile și se leagă de formularul PDF (#915)
++    # ------------------------------------------------------------------
++
++    def _xfa_form_paths(self):
++        """Căile câmpurilor din șablonul XFA al PDF-ului D394 (cum leagă Adobe datele)."""
++        try:
++            import pypdf
++        except ImportError:
++            self.skipTest("pypdf indisponibil")
++        profile = _profile_registry.get_anaf_profile("D394", fields.Date.today())
++        with file_open(profile["pdf_file"], "rb") as f, mute_logger("pypdf._reader"):
++            xfa = pypdf.PdfReader(io.BytesIO(f.read())).trailer["/Root"]["/AcroForm"]["/XFA"]
++        template = next(xfa[i + 1].get_object().get_data() for i in range(0, len(xfa), 2) if xfa[i] == "template")
++        paths = set()
++
++        def walk(node, path):
++            for child in node:
++                if not isinstance(child.tag, str):
++                    continue
++                kind = etree.QName(child).localname
++                if kind not in ("subform", "subformSet", "field", "exclGroup", "area"):
++                    continue
++                name = child.get("name") if kind != "area" else None
++                child_path = f"{path}/{name}" if name else path
++                if name:
++                    paths.add(child_path)
++                walk(child, child_path)
++
++        walk(etree.fromstring(template), "")
++        return paths
++
++    @staticmethod
++    def _xdp_data_paths(xdp_content):
++        """Căile elementelor din `xfa:data` (ex. `/form1/tip1/sub1/sub2/cuiP`)."""
++        paths = set()
++
++        def walk(node, path):
++            for child in node:
++                if isinstance(child.tag, str):
++                    child_path = f"{path}/{etree.QName(child).localname}"
++                    paths.add(child_path)
++                    walk(child, child_path)
++
++        walk(etree.fromstring(xdp_content).find(".//{http://www.xfa.org/schema/xfa-data/1.0/}data"), "")
++        return paths
++
++    def test_d394_xdp_fields_bind_to_pdf_form(self):
++        """TC-21: fiecare element din XDP are câmp corespondent în formularul PDF (#915).
++
++        Adobe leagă datele după nume și cale: `adresaP`, `den` (reprezentant) și
++        `detaliuProdus` nu existau în formular, deci rămâneau goale.
++        """
++        form_paths = self._xfa_form_paths()
++        handler = self.env["l10n_ro_account_vat_journal.sale.tax.report.handler"].with_company(self.company)
++        address = dict.fromkeys(("apart", "bloc", "nr", "strada", "judet", "localitate", "tara", "alte_detalii"), "x")
++        base_item = {"type": "V", "cota": 0, "baza": 100, "tva": 0, "move_count": 1}
++        values = {
++            **handler._get_anaf_company_data(self.company, fields.Date.today()),
++            "profile_pdf_name": "D394.pdf",
++            "number_range": [{"from_serie": "F", "from_number": 1, "to_serie": "F", "to_number": 2, "move_count": 2}],
++            "move_count": 2,
++            "items1": [
++                {
++                    **base_item,
++                    "partner_vat": "10000008",
++                    "register_name": "Client",
++                    "partner_address": {},
++                    "products": [{"cod_produs": "44071290", "nrfact_prod": 1, "baza_prod": 100, "tva_prod": 0}],
++                }
++            ],
++            "items2": [{**base_item, "partner_vat": "", "register_name": "PF", "partner_address": address}],
++        }
++        xdp = self.env["ir.qweb"]._render("l10n_ro_anaf_d394.d394_report_template", values)
++
++        unbound = sorted(p for p in self._xdp_data_paths(xdp.encode()) if p not in form_paths)
++        self.assertFalse(unbound, f"Elemente XDP fără câmp în formularul PDF: {unbound}")
++
++    def test_d394_xdp_contains_invoices(self):
++        """TC-22: XDP-ul exportat conține facturile și plaja de facturi emise (regresie e286ed946)."""
++        tax_21 = self._find_sale_tax(21, rc=False)
++        income_account = self._find_income_account()
++        if not tax_21 or not income_account:
++            self.skipTest("Nu exista taxa de vanzari 21% sau cont de venituri in compania de test")
++        customer = self._ro_partner({"name": "Client XDP TC22", "vat": self.TRADE_PARTNER_VAT})
++        invoice = (
+             self.env["account.move"]
+             .sudo()
+             .create(
+                 {
+-                    "move_type": "in_invoice",
+-                    "partner_id": non_eu_vendor.id,
++                    "move_type": "out_invoice",
++                    "partner_id": customer.id,
+                     "company_id": self.company.id,
+                     "invoice_date": fields.Date.today(),
+                     "date": fields.Date.today(),
+                     "invoice_line_ids": [
+-                        (
+-                            0,
+-                            0,
++                        Command.create(
+                             {
+-                                "name": "Servicii TC19",
++                                "name": "Produs TC22",
+                                 "quantity": 1,
+-                                "price_unit": 500.0,
+-                                "account_id": expense_account.id,
+-                            },
++                                "price_unit": 1000.0,
++                                "account_id": income_account.id,
++                                "tax_ids": [Command.set(tax_21.ids)],
++                            }
+                         )
+                     ],
+                 }
+             )
+         )
+-        bill_us.action_post()
+-
+-        report = self.env.ref("l10n_ro_account_vat_journal.l10n_ro_purchase_tax_report")
+-        handler = self.env["l10n_ro_account_vat_journal.purchase.tax.report.handler"].with_company(self.company)
+-        options = self._make_options(report)
+-        info = handler._collect_d394_intracom_info(options)
++        invoice.action_post()
+ 
+-        # nrCui3/nrCui4 nu mai sunt furnizate de intracom (raman 0 in info final, legate de op1).
+-        self.assertNotIn("nrCui3", info, "nrCui3 nu trebuie completat din numarul de parteneri UE")
+-        self.assertNotIn("nrCui4", info, "nrCui4 nu trebuie completat din numarul de parteneri non-UE")
+-        cota = int(rc_tax.amount)
+-        self.assertEqual(
+-            info[f"tvaDedAI{cota}"],
+-            int(round(1000.0 * cota / 100.0, 0)),
+-            f"tvaDedAI{cota} trebuie sa fie baza×cota pentru achizitia intracomunitara",
+-        )
++        report = self.env.ref("l10n_ro_account_vat_journal.l10n_ro_sale_tax_report")
++        handler = self.env["l10n_ro_account_vat_journal.sale.tax.report.handler"].with_company(self.company)
++        xdp = etree.fromstring(handler.export_to_xdp(self._make_options(report))["file_content"])
+ 
+-        # In declaratia finala nrCui3/nrCui4 sunt 0 (nu exista op1 cu tip_partener 3/4).
+-        full_info = handler._build_d394_info([], [], [])
+-        full_info.update(info)
+-        self.assertEqual(full_info["nrCui3"], 0, "R124: nrCui3 trebuie 0 fara op1 tip_partener=3")
+-        self.assertEqual(full_info["nrCui4"], 0, "R125: nrCui4 trebuie 0 fara op1 tip_partener=4")
++        cuis = [el.text for el in xdp.iter("cuiP")]
++        self.assertIn("10000008", cuis, "Factura către client trebuie să apară în tip1/sub1/sub2")
++        self.assertTrue(list(xdp.iter("plaja")), "Plaja de facturi emise (rezI/i2/facturi2) lipsește")
++        self.assertGreaterEqual(int(next(xdp.iter("fact_emise")).text), 1)
+ 
+     def test_displayed_report_dynamic_tax_columns(self):
+         """TC-20: Raportul afișat injectează coloane Bază/TVA per cotă și le populează."""
+@@ -1845,7 +2024,6 @@ def test_displayed_report_dynamic_tax_columns(self):
+                 "name": "Client coloane TC20",
+                 "vat": self.TRADE_PARTNER_VAT,
+                 "country_id": self.env.ref("base.ro").id,
+-                "is_company": True,
+             }
+         )
+         inv = (
+@@ -1917,7 +2095,6 @@ def test_purchase_report_columns_use_purchase_taxes(self):
+                 "name": "Furnizor coloane TC21",
+                 "vat": self.TRADE_PARTNER_VAT,
+                 "country_id": self.env.ref("base.ro").id,
+-                "is_company": True,
+             }
+         )
+         bill = (

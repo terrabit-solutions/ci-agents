@@ -52,12 +52,15 @@ reviewed or what Mentor commits.
 
 ## Here
 
-- `argus/`: `comment.sh` and `needs-pacioli.sh` (the only writes Argus may make),
-  `verdict.sh` (the counts; a workflow step, not Argus, moves the draft)
+- `argus/`: `comment.sh`, `inline.py` and `needs-pacioli.sh` (the only writes Argus may make;
+  `inline.py` posts a line comment only on code the PR adds and never twice for the same rule
+  on an unchanged line), `verdict.sh` (the counts; a workflow step, not Argus, moves the draft)
 - `pacioli/`: `comment.sh` (the only write of the pre-check: one comment, which must open with
   `## Pre-verificare Pacioli`, gets the reviewed commit appended)
 - `mentor/`: `select_modules.py`, `review_check.py` (the review's checks without AI), `push_commit.py`, `push_screenshots.py`, `pr_comment.py`,
   `show_sessions.py`, `carry_result.py`
+
+- `tests/`: the scripts' tests, `python3 -m unittest discover -s tests` (`.github/workflows/tests.yml`)
 
 The rules themselves (Argus's `REVIEW.md`, Mentor's `MENTOR.md`, Pacioli's `PACIOLI.md`) are not here: they live in
 `ci-agents/` of the private `terrabit-solutions/terrabit-claude` and are read with the Argus
