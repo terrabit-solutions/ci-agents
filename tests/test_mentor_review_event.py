@@ -42,8 +42,9 @@ class TestReviewEvent(unittest.TestCase):
         # PR 3872: the sheet is missing, a critical finding.
         self.assertEqual(self.event(sheet=False, findings=[finding("critic")]), "REQUEST_CHANGES")
 
-    def test_major_comments(self):
-        self.assertEqual(self.event(findings=[finding("major")]), "COMMENT")
+    def test_major_requests_changes(self):
+        # PR bitshop_marketplace#664: two major findings failed the check, the review only commented.
+        self.assertEqual(self.event(findings=[finding("major"), finding("minor")]), "REQUEST_CHANGES")
 
     def test_failed_step_does_not_approve(self):
         self.assertEqual(self.event(job_ok=False), "COMMENT")

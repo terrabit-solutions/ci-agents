@@ -18,8 +18,8 @@ screenshots-commit), RUN_URL. Cu MODE=review (jobul review) raportul e `.mentor-
 În modul review raportul e un review pe push-ul verificat, ca la Argus: Mentor apare la Reviewers
 și la fiecare push, chiar și când n-are nimic de verificat. Aprobă (APPROVE) când fiecare modul
 are fișa și rularea le-a verificat pe toate fără constatări critice sau majore (JOB_OK=true: niciun
-pas al jobului n-a eșuat), cere modificări (REQUEST_CHANGES) la o constatare critică și doar
-comentează în rest. Un review pe același push și cu același verdict e rescris, nu dublat;
+pas al jobului n-a eșuat), cere modificări (REQUEST_CHANGES) la o constatare critică sau majoră
+(acelea care pică check-ul `mentor / review`) și doar comentează în rest. Un review pe același push și cu același verdict e rescris, nu dublat;
 aprobările și cererile de modificări Mentor mai vechi sunt retrase (dismiss).
 """
 from __future__ import annotations
@@ -181,15 +181,16 @@ def mentor_reviews(repo: str, number: str) -> list[dict]:
 
 
 def review_event(report: list, verify: list, job_ok: bool) -> str:
-    """REQUEST_CHANGES on a critical finding; APPROVE when every module has its sheet, the run
-    checked all of them and nothing critical or major is left; COMMENT otherwise (nothing to
-    check, a major finding, a module the check did not reach, a failed step)."""
+    """REQUEST_CHANGES on a critical or major finding (those fail the `mentor / review` check);
+    APPROVE when every module has its sheet, the run checked all of them and nothing critical or
+    major is left; COMMENT otherwise (nothing to check, a module the check did not reach, a
+    failed step)."""
     modules = {r.get("module"): r for r in report if isinstance(r, dict)}
     verifies = {v.get("module"): v for v in verify if isinstance(v, dict)}
     severities = [f.get("severity") for v in verifies.values() for f in v.get("findings") or []]
-    if "critic" in severities:
+    if {"critic", "major"} & set(severities):
         return "REQUEST_CHANGES"
-    if job_ok and modules and "major" not in severities \
+    if job_ok and modules \
             and all(r.get("sheet") and m in verifies for m, r in modules.items()):
         return "APPROVE"
     return "COMMENT"
