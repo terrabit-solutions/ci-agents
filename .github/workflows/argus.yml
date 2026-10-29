@@ -1,7 +1,8 @@
 name: argus
 
-# Argus, the advisory AI review of a suite's pull requests: it comments, it never blocks the
-# merge, and it moves a clean draft to Ready (label "wip" to keep it a draft). Called by .github/workflows/argus.yml of each suite (which sets the triggers). The
+# Argus, the AI review of a suite's pull requests: it comments, approves a clean head, requests
+# changes on a blocking issue and fails its check while blocking or important issues are left
+# (a suite may make it required), and it moves a clean draft to Ready (label "wip" to keep it a draft). Called by .github/workflows/argus.yml of each suite (which sets the triggers). The
 # scripts come from this repository, the rules (ci-agents/argus/REVIEW.md) from the private
 # terrabit-solutions/terrabit-claude, plus the suite's own .github/argus/REVIEW.local.md from
 # its base branch, so a PR cannot change how it is reviewed.
@@ -329,6 +330,7 @@ jobs:
           echo "::error::The app token still does not see $REPO after 3 minutes."
           exit 1
       - name: Verdict - argus-ok, and Ready if the draft is clean
+        id: verdict
         env:
           DRAFT: ${{ github.event.pull_request.draft }}
           GH_TOKEN: ${{ steps.app.outputs.token }}
@@ -359,10 +361,18 @@ jobs:
           fi
           read -r blocking important minor < "$verdict"
           echo "Argus: $blocking blocking, $important important, $minor minor."
-          if [ "$blocking" != 0 ] || [ "$important" != 0 ]; then
-            echo "Issues to fix: no argus-ok, a draft stays a draft."
-            exit 0
-          fi
+          # The [blocant]/[important] comments Argus posted on this head count too, so a
+          # misreported verdict can only hold the PR back, never approve it.
+          flags=$(ghr "repos/$REPO/pulls/$PR_NUMBER/comments" --paginate --jq '.[]
+            | select(.user.login == "argus-terrabit[bot]" and .commit_id == env.HEAD_SHA)
+            | select(.body | test("^\\*\\*\\[(blocant|important)\\]"))
+            | .body | capture("^\\*\\*\\[(?<s>blocant|important)\\]").s')
+          inline_blocking=$(grep -c '^blocant$' <<< "$flags" || true)
+          inline_important=$(grep -c '^important$' <<< "$flags" || true)
+          [ "$inline_blocking" -gt "$blocking" ] && blocking=$inline_blocking
+          [ "$inline_important" -gt "$important" ] && important=$inline_important
+          echo "blocking=$blocking" >> "$GITHUB_OUTPUT"
+          echo "important=$important" >> "$GITHUB_OUTPUT"
           # The PR as it is now: same head, and whether wip was added meanwhile.
           state=$(ghr "repos/$REPO/pulls/$PR_NUMBER" \
             --jq '"\(.draft) \(.head.sha) \(any(.labels[]; .name | ascii_downcase == "wip"))"')
@@ -371,12 +381,18 @@ jobs:
             echo "New commits during the review ($now_head): the next review decides."
             exit 0
           fi
-          flagged=$(ghr "repos/$REPO/pulls/$PR_NUMBER/comments" --paginate --jq '.[]
-            | select(.user.login == "argus-terrabit[bot]" and .commit_id == env.HEAD_SHA)
-            | select(.body | test("^\\*\\*\\[(blocant|important)\\]"))
-            | .id' | wc -l)
-          if [ "$flagged" -gt 0 ]; then
-            echo "$flagged blocking or important comments on this head: no argus-ok."
+          # The review verdict, for the next step: approve when clean, request changes on a
+          # blocking issue, only the summary comment when important ones are left.
+          if [ "$blocking" != 0 ]; then
+            event=REQUEST_CHANGES
+          elif [ "$important" != 0 ]; then
+            event=COMMENT
+          else
+            event=APPROVE
+          fi
+          echo "event=$event" >> "$GITHUB_OUTPUT"
+          if [ "$event" != APPROVE ]; then
+            echo "Issues to fix ($blocking blocking, $important important): no argus-ok, a draft stays a draft."
             exit 0
           fi
           ghr "repos/$REPO/issues/$PR_NUMBER/labels" -f "labels[]=argus-ok" --silent
@@ -386,6 +402,18 @@ jobs:
           fi
           GH_TOKEN="$READY_TOKEN" gh pr ready "$PR_NUMBER" -R "$REPO"
           gh pr comment "$PR_NUMBER" -R "$REPO" --body "Review Argus curat: PR-ul trece pe Ready, pornesc testele și Mentor. (Eticheta \`wip\` îl ține ca draft.)"
+      # Approve, request changes, or only the summary comment, by the counts of the step above;
+      # Argus's earlier verdicts that no longer hold are dismissed.
+      - name: Argus's verdict as a review
+        if: "!cancelled() && steps.verdict.outputs.event != ''"
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT: ${{ steps.verdict.outputs.event }}
+          BLOCKING: ${{ steps.verdict.outputs.blocking }}
+        run: python3 -I .argus/review_verdict.py "$REPO" "$PR_NUMBER" "$HEAD_SHA" "$EVENT" "$BLOCKING"
       # The action hides Claude's output. Show only the commands the
       # permission rules refused and, on failure, the final result text,
       # which carries the error (auth, quota, ...). The tokens used go to the
@@ -433,3 +461,15 @@ jobs:
                   with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
                       fh.write(table)
           EOF
+      # Last: blocking or important issues turn the check red, so a suite that makes
+      # "argus / review" a required check blocks the merge (an admin can still bypass it).
+      - name: Fail while blocking or important issues are left
+        if: always() && !cancelled() && steps.verdict.outputs.blocking != ''
+        env:
+          BLOCKING: ${{ steps.verdict.outputs.blocking }}
+          IMPORTANT: ${{ steps.verdict.outputs.important }}
+        run: |
+          if [ "$BLOCKING" != 0 ] || [ "$IMPORTANT" != 0 ]; then
+            echo "::error::Argus: $BLOCKING blocking and $IMPORTANT important issues left; fix them and push to the PR."
+            exit 1
+          fi
