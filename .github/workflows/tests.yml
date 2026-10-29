@@ -1,7 +1,9 @@
 name: tests
 
-# The tests of this repository's scripts (stdlib only, no install), on the org's VPS
-# runners: the org has no GitHub-hosted minutes.
+# The tests of this repository's scripts (stdlib only, no install). On a GitHub-hosted
+# runner: the repository is public, so the minutes are free, a fork's pull request must
+# not run on the VPS, and a job asking for the org's self-hosted runners stayed queued
+# here for hours (29.10) while they were idle.
 
 on:
   pull_request:
@@ -14,7 +16,7 @@ permissions:
 
 jobs:
   unittest:
-    runs-on: ["self-hosted", "linux", "agents"]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
