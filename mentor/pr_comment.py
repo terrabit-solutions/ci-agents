@@ -15,9 +15,12 @@ Folosire (din rădăcina repo-ului suitei, după jobul sheet):
 Mediu: SCREENSHOTS (rezultatul jobului screenshots), SHOTS_COMMIT (al jobului
 screenshots-commit), RUN_URL. Cu MODE=review (jobul review) raportul e `.mentor-precheck.json`
 (`sheet` spune dacă modulul are fișă) și comentariul spune ce lipsește din fișe, nu ce s-a refăcut.
-În modul review raportul e un review „comment” pe push-ul verificat, ca la Argus: Mentor apare
-la Reviewers și la fiecare push, chiar și când n-are nimic de verificat. Nu aprobă și nu cere
-modificări. Un review existent pe același push e rescris, nu dublat.
+În modul review raportul e un review pe push-ul verificat, ca la Argus: Mentor apare la Reviewers
+și la fiecare push, chiar și când n-are nimic de verificat. Aprobă (APPROVE) când fiecare modul
+are fișa și rularea le-a verificat pe toate fără constatări critice sau majore (JOB_OK=true: niciun
+pas al jobului n-a eșuat), cere modificări (REQUEST_CHANGES) la o constatare critică și doar
+comentează în rest. Un review pe același push și cu același verdict e rescris, nu dublat;
+aprobările și cererile de modificări Mentor mai vechi sunt retrase (dismiss).
 """
 from __future__ import annotations
 
@@ -153,8 +156,8 @@ def build(repo: str, pr_sha: str, head: str, report: list, verify: list,
         lines += [f"Nimic de verificat la `{pr_sha[:9]}`: PR-ul nu schimbă funcțional niciun modul." if review
                   else f"Nimic de refăcut la `{pr_sha[:9]}`: fișele și capturile urmează deja codul.", ""]
     elif serious and review:
-        lines += [f"Rămân **{serious}** constatări critice sau majore: fără `mentor-ok`, merge manual. "
-                  "Fișa se face sau se completează local cu Mentor (`fisa-completa`), cu capturile, "
+        lines += [f"Rămân **{serious}** constatări critice sau majore: check-ul `mentor / review` pică "
+                  "și nu vine `mentor-ok`. Fișa se face sau se completează local cu Mentor (`fisa-completa`), cu capturile, "
                   "și se împinge în PR.", ""]
     elif serious:
         lines += [f"Rămân **{serious}** constatări critice sau majore: fără `mentor-ok`, merge manual.", ""]
@@ -166,31 +169,58 @@ def build(repo: str, pr_sha: str, head: str, report: list, verify: list,
     return "\n".join(lines) + "\n", bool(modules or failed)
 
 
-def find_review(repo: str, number: str, pr_sha: str) -> dict | None:
-    page = 1
+def mentor_reviews(repo: str, number: str) -> list[dict]:
+    reviews, page = [], 1
     while True:
-        reviews = api("GET", f"/repos/{repo}/pulls/{number}/reviews?per_page=100&page={page}")
-        for review in reviews:
-            if (review.get("user") or {}).get("login") == BOT and review.get("commit_id") == pr_sha \
-                    and MARKER in (review.get("body") or ""):
-                return review
-        if len(reviews) < 100:
-            return None
+        batch = api("GET", f"/repos/{repo}/pulls/{number}/reviews?per_page=100&page={page}")
+        reviews += [r for r in batch if (r.get("user") or {}).get("login") == BOT
+                    and MARKER in (r.get("body") or "")]
+        if len(batch) < 100:
+            return reviews
         page += 1
+
+
+def review_event(report: list, verify: list, job_ok: bool) -> str:
+    """REQUEST_CHANGES on a critical finding; APPROVE when every module has its sheet, the run
+    checked all of them and nothing critical or major is left; COMMENT otherwise (nothing to
+    check, a major finding, a module the check did not reach, a failed step)."""
+    modules = {r.get("module"): r for r in report if isinstance(r, dict)}
+    verifies = {v.get("module"): v for v in verify if isinstance(v, dict)}
+    severities = [f.get("severity") for v in verifies.values() for f in v.get("findings") or []]
+    if "critic" in severities:
+        return "REQUEST_CHANGES"
+    if job_ok and modules and "major" not in severities \
+            and all(r.get("sheet") and m in verifies for m, r in modules.items()):
+        return "APPROVE"
+    return "COMMENT"
+
+
+# The state GitHub gives a review submitted with each event.
+STATE = {"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED", "COMMENT": "COMMENTED"}
 
 
 def post_review(repo: str, number: str, pr_sha: str, report_path: str, verify_path: str) -> None:
     """The review job: Mentor commits nothing, so the branch is not read (the token has no
-    Contents permission); the report goes as a "comment" review on the pushed head."""
-    body, _anything = build(repo, pr_sha, pr_sha, load(report_path), load(verify_path), [], [])
-    existing = find_review(repo, number, pr_sha)
-    if existing:
-        api("PUT", f"/repos/{repo}/pulls/{number}/reviews/{existing['id']}", {"body": body})
-        print(f"Review-ul Mentor actualizat: {existing['html_url']}")
+    Contents permission); the report goes as a review on the pushed head, with the event of
+    review_event. A review of the same push and verdict is rewritten, not doubled; Mentor's
+    earlier approvals and change requests that no longer hold are dismissed, so the PR shows
+    only the verdict of the last push."""
+    report, verify = load(report_path), load(verify_path)
+    body, _anything = build(repo, pr_sha, pr_sha, report, verify, [], [])
+    event = review_event(report, verify, os.environ.get("JOB_OK") == "true")
+    reviews = mentor_reviews(repo, number)
+    keep = next((r for r in reviews if r.get("commit_id") == pr_sha and r.get("state") == STATE[event]), None)
+    for old in reviews:
+        if old is not keep and old.get("state") in ("APPROVED", "CHANGES_REQUESTED"):
+            api("PUT", f"/repos/{repo}/pulls/{number}/reviews/{old['id']}/dismissals",
+                {"message": f"Înlocuit de verificarea Mentor a push-ului {pr_sha[:9]}.", "event": "DISMISS"})
+    if keep:
+        api("PUT", f"/repos/{repo}/pulls/{number}/reviews/{keep['id']}", {"body": body})
+        print(f"Review-ul Mentor ({event}) actualizat: {keep['html_url']}")
     else:
         created = api("POST", f"/repos/{repo}/pulls/{number}/reviews",
-                      {"commit_id": pr_sha, "event": "COMMENT", "body": body})
-        print(f"Review-ul Mentor adăugat: {created['html_url']}")
+                      {"commit_id": pr_sha, "event": event, "body": body})
+        print(f"Review-ul Mentor ({event}) adăugat: {created['html_url']}")
 
 
 def main() -> None:
