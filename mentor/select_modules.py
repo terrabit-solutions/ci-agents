@@ -4,7 +4,9 @@
 Un modul intră în listă dacă PR-ul îi schimbă funcțional codul (modele, view-uri,
 wizard-uri, date, rapoarte, meniuri, manifest, readme DESCRIPTION/USAGE/CONFIGURE)
 după ultimul commit în care Mentor i-a scris fișa în același PR. Schimbările doar
-în teste, traduceri, capturi, istoric sau README-uri generate nu contează.
+în teste, traduceri, capturi, istoric sau README-uri generate nu contează. Nici
+manifestul nu contează când PR-ul îi schimbă doar `version` (bump-ul obligatoriu la
+orice modificare, de exemplu o iconiță nouă); un manifest nou (modul adăugat) contează.
 
 Cu `--screenshots`, alege în schimb modulele cu `tests/test_screenshots.py` ale căror capturi pot
 arăta altfel, după ultimul commit în care Mentor le-a pus capturile: un XML de ecran schimbat (view-uri,
@@ -21,6 +23,7 @@ Scrie JSON pe stdout: {"selected": [{"module", "action", "reason"}], "skipped": 
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import subprocess
@@ -42,6 +45,21 @@ def git(*args: str) -> str:
 
 def is_functional(rel: str) -> bool:
     return rel in FUNCTIONAL_FILES or rel.startswith(FUNCTIONAL)
+
+
+def manifest_changed(base: str, head: str, module: str) -> bool:
+    """Whether the PR changes the module's manifest beyond `version`. A new manifest counts,
+    and so does one that cannot be read as a literal dict."""
+    try:
+        old = ast.literal_eval(git("show", f"{base}:{module}/__manifest__.py"))
+        new = ast.literal_eval(git("show", f"{head}:{module}/__manifest__.py"))
+    except (subprocess.CalledProcessError, ValueError, SyntaxError):
+        return True
+    if not isinstance(old, dict) or not isinstance(new, dict):
+        return True
+    old.pop("version", None)
+    new.pop("version", None)
+    return old != new
 
 
 def changes_screens(rel: str) -> bool:
@@ -91,6 +109,8 @@ def main() -> None:
     last_fisa_by_bot: dict[str, int] = {}
     # --screenshots: the sheets Mentor wrote, which may call for screenshots not made yet.
     sheet_by_bot: dict[str, int] = {}
+    # Manifests changed only in `version` between base and head do not count.
+    manifest: dict[str, bool] = {}
     order = 0
     author = ""
     for line in log.splitlines():
@@ -105,6 +125,10 @@ def main() -> None:
             continue
         mine = rel.startswith(SHOTS) and rel.endswith(".png") if args.screenshots else rel == FISA
         counts = (changes_screens(rel) or rel == FISA) if args.screenshots else is_functional(rel)
+        if counts and rel == "__manifest__.py":
+            if module not in manifest:
+                manifest[module] = manifest_changed(args.base, args.head, module)
+            counts = manifest[module]
         if mine and args.bot in author:
             last_fisa_by_bot[module] = order
         elif counts and args.bot not in author:
