@@ -1,0 +1,41 @@
+name: ci-gate
+
+# The merge gate for pull requests from forks. The org ruleset on 18.0/19.0/20.0 requires the
+# `ci-gate` commit status. GitHub runs no workflow on a fork's pull request in a private
+# repository, so a fork's PR stays blocked until a maintainer has read its diff and mirrored it
+# into a branch of the suite (fork-pr/mirror.sh): the mirror PR runs this job and the whole CI on
+# the same commit, and a commit status shows on every PR with that head, the fork's included.
+# Called by .github/workflows/ci-gate.yml of each suite, on every PR (no paths filter: a required
+# status that never comes blocks the PR for good). No AI, no checkout.
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: >-
+          JSON runner labels, e.g. '"ubuntu-latest"' for a suite outside the org. Empty: the
+          org's VPS runners kept for the agents.
+        type: string
+        default: ""
+
+jobs:
+  gate:
+    runs-on: ${{ fromJSON(inputs.runs-on || '["self-hosted", "linux", "agents"]') }}
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    steps:
+      - name: Set the ci-gate status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Should a fork's PR ever run workflows here, it still waits for its mirror.
+          if [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+            echo "PR from a fork ($HEAD_REPO): mirror it with fork-pr/mirror.sh after reading the diff."
+            exit 1
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=success -f context=ci-gate \
+            -f description="Head on a branch of this repository" >/dev/null
+          echo "ci-gate set on $SHA"
