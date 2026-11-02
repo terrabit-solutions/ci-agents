@@ -94,8 +94,33 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+          # The history without the old file contents: the screenshots make most of the
+          # repository, and a full clone took minutes on a busy runner.
+          filter: blob:none
           # Claude may read the workspace: keep the token out of .git/config.
           persist-credentials: false
+      # Without the token in .git/config git cannot fetch a missing blob later, so the ones
+      # select_modules, review_check and the PR diff read (the merge base and the PR
+      # commits) come here, in one fetch, with the token only in this step's environment.
+      - name: The file contents of the PR range
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          TOKEN: ${{ github.token }}
+        run: |
+          base=$(git merge-base "$BASE" "$HEAD")
+          { git rev-list --objects --missing=print "$base^{tree}"
+            git rev-list --objects --missing=print "$base..$HEAD"; } \
+            | sed -n 's/^?//p' | sort -u > "$RUNNER_TEMP/blobs"
+          echo "$(wc -l < "$RUNNER_TEMP/blobs") missing blobs in the PR range"
+          if [ -s "$RUNNER_TEMP/blobs" ]; then
+            auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+            echo "::add-mask::$auth"
+            GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader \
+              GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+              git fetch --no-tags --no-write-fetch-head --recurse-submodules=no \
+                --filter=blob:none --stdin origin < "$RUNNER_TEMP/blobs"
+          fi
       # mentor-ok says "the sheets of this PR are there and complete", for the automerge
       # workflow: it goes away now and comes back only if this run ends clean.
       # Mentor's own app labels it, so mentor-ok shows as Mentor's.
