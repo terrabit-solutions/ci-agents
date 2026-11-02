@@ -9,6 +9,7 @@ made once and reaches every suite.
 | Mentor | `mode: review` (default): checks that each module the PR changes functionally has its consultant sheet, with the fisa-modul structure and a step for each change (`review_check.py` without AI, then one read-only Claude session), in one light job: no Odoo, nothing committed, the report as one PR review (Approve when every sheet is there and clean, Request changes on a critical or major finding, Comment otherwise) and `mentor-ok` when clean; with critical or major findings left the `mentor / review` check fails after the report, so a suite can make it a required check. `mode: full`: as the fisa-completa skill, in three jobs: writes or updates the consultant sheet of the modules a PR changes functionally, regenerates the screenshots whose screens changed or that the sheet calls for (view, wizard or OWL XML, the screenshot test, new steps in the sheet), then has the sheet audited against them, up to three rounds of fixes; all as commits on the PR, with the report as one PR comment | `.github/workflows/mentor.yml` |
 | Pacioli | Pre-check of a PR labelled `needs-pacioli` (Argus adds it when a PR touches accounting entries, accounts or taxes): one read-only Claude session compares the entries, accounts and taxes of the diff with the RO accounting reference (`terrabit-solutions/pacioli`) and posts `## Pre-verificare Pacioli` with a proposed verdict, the findings (Dr/Cr, legal basis) and `Commit: <sha>`; again on every new head while the label stays. Advisory: the verdict that opens Argus's gate (`## Verificare Pacioli`) is still a person's, who removes the label. Never labels, approves or merges | `.github/workflows/pacioli.yml` |
 | Automerge | Merges a PR labelled `automerge` once Argus is clean (`argus-ok`), Mentor is done and clean (`mentor-ok`), nothing runs on its branch and every run on its head passed; `wip`, `needs-pacioli` and `no-merge` stop it. No AI | `.github/workflows/automerge.yml` |
+| ci-gate | Sets the `ci-gate` commit status on each PR whose head is a branch of the suite. The org ruleset on 18.0/19.0/20.0 requires it, so a PR from a fork (no workflow runs on it in a private repository) stays blocked until a maintainer reads the diff and runs `fork-pr/mirror.sh`, which mirrors it into `fork-pr/<n>` with a PR of its own: the whole CI runs there, on the fork's commit. No AI | `.github/workflows/ci-gate.yml` |
 
 Both are reusable workflows (`workflow_call`), run on the self-hosted runners of the
 organization: the light jobs (Argus, Mentor's review, Mentor's sheet, the screenshots commit) on
@@ -41,6 +42,7 @@ of the PR's base branch.
 .github/workflows/mentor.yml     calls ci-agents/.github/workflows/mentor.yml@main
 .github/workflows/pacioli.yml    calls ci-agents/.github/workflows/pacioli.yml@main, on labeled/synchronize/reopened
 .github/workflows/automerge.yml  calls ci-agents/.github/workflows/automerge.yml@main, after each PR workflow
+.github/workflows/ci-gate.yml    calls ci-agents/.github/workflows/ci-gate.yml@main, on every PR, on every branch
 .github/argus/REVIEW.local.md    optional: the suite's own review rules, read after the shared rules
 .github/mentor/private_repos.sh  the private clones of its test.yml (the only code with credentials)
 .github/mentor/install.sh        what its test.yml installs before `pip install -r`
@@ -55,6 +57,9 @@ reviewed or what Mentor commits.
 - `argus/`: `comment.sh`, `inline.py` and `needs-pacioli.sh` (the only writes Argus may make;
   `inline.py` posts a line comment only on code the PR adds and never twice for the same rule
   on an unchanged line), `verdict.sh` (the counts; a workflow step, not Argus, moves the draft)
+- `fork-pr/`: `mirror.sh <owner/repo> <pr>`, run by a maintainer (their gh login, so the mirror PR
+  starts the workflows) after reading a fork's diff; it refuses a diff touching `.github/`
+  unless `ALLOW_GITHUB_CHANGES=1`, and moves the branch again after each push on the fork
 - `pacioli/`: `comment.sh` (the only write of the pre-check: one comment, which must open with
   `## Pre-verificare Pacioli`, gets the reviewed commit appended)
 - `mentor/`: `select_modules.py`, `review_check.py` (the review's checks without AI), `push_commit.py`, `push_screenshots.py`, `pr_comment.py`,
