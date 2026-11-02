@@ -76,8 +76,8 @@ jobs:
     # sheet exists and has the fisa-modul structure (sections 1-11, a screenshot on every step,
     # the screenshots it refers to present), then one read-only Claude session checks that its
     # steps cover what the PR changes. The report goes as a PR review (Approve, Request changes
-    # on a critical finding, Comment otherwise) and mentor-ok comes
-    # only without critical or major findings. One job on the "agents" runners: no Odoo, no
+    # on a critical or major finding or on more than 2 minor ones, Comment otherwise) and mentor-ok
+    # comes only without them. One job on the "agents" runners: no Odoo, no
     # Chrome, no commit. The sheet itself is made locally, with Mentor (fisa-completa).
     if: >-
       inputs.mode != 'full' &&
@@ -276,7 +276,7 @@ jobs:
           COUNT: ${{ steps.select.outputs.count }}
         run: |
           if [ "$COUNT" != 0 ]; then
-            left=$(python3 -c 'import json;print(sum(1 for m in json.load(open(".mentor-verify.json")) for f in m["findings"] if f.get("severity") in ("critic", "major")))')
+            left=$(python3 -I .ci-agents/mentor/pr_comment.py --blocking .mentor-verify.json)
             echo "left=$left" >> "$GITHUB_OUTPUT"
             if [ "$left" != 0 ]; then
               echo "Findings left ($left): no mentor-ok, the check fails after the report."
@@ -320,15 +320,16 @@ jobs:
         run: |
           python3 -I .ci-agents/mentor/pr_comment.py "$REPO" "$PR_NUMBER" "$BRANCH" "$PR_SHA" \
             .mentor-precheck.json .mentor-verify.json | tee -a "$GITHUB_STEP_SUMMARY"
-      # Last, after the report: critical or major findings turn the check red, so a suite
+      # Last, after the report: critical or major findings, or more than 2 minor ones (pr_comment.py
+      # MAX_MINOR), turn the check red, so a suite
       # that makes "mentor / review" a required check blocks the merge (an admin can still
       # bypass it), not only automerge through the missing mentor-ok.
-      - name: Fail while critical or major findings are left
+      - name: Fail while blocking findings are left
         if: always() && !cancelled() && steps.verdict.outputs.left != '' && steps.verdict.outputs.left != '0'
         env:
           LEFT: ${{ steps.verdict.outputs.left }}
         run: |
-          echo "::error::Mentor: $LEFT critical or major findings left; make or complete the sheet with Mentor (fisa-completa) and push it to the PR."
+          echo "::error::Mentor: $LEFT blocking findings left (critical, major, or minor above 2); make or complete the sheet with Mentor (fisa-completa) and push it to the PR."
           exit 1
 
   sheet:
