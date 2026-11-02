@@ -18,8 +18,8 @@ screenshots-commit), RUN_URL. Cu MODE=review (jobul review) raportul e `.mentor-
 În modul review raportul e un review pe push-ul verificat, ca la Argus: Mentor apare la Reviewers
 și la fiecare push, chiar și când n-are nimic de verificat. Aprobă (APPROVE) când fiecare modul
 are fișa și rularea le-a verificat pe toate fără constatări critice sau majore (JOB_OK=true: niciun
-pas al jobului n-a eșuat), cere modificări (REQUEST_CHANGES) la o constatare critică sau majoră
-(acelea care pică check-ul `mentor / review`) și doar comentează în rest. Un review pe același push și cu același verdict e rescris, nu dublat;
+pas al jobului n-a eșuat), cere modificări (REQUEST_CHANGES) la o constatare critică sau majoră ori la mai mult de MAX_MINOR
+constatări minore pe PR (acelea care pică check-ul `mentor / review`) și doar comentează în rest. Un review pe același push și cu același verdict e rescris, nu dublat;
 aprobările și cererile de modificări Mentor mai vechi sunt retrase (dismiss).
 """
 from __future__ import annotations
@@ -36,6 +36,8 @@ API = "https://api.github.com"
 BOT = "mentor-terrabit[bot]"
 MARKER = "<!-- mentor-report -->"
 SEVERITY = {"critic": "🔴", "major": "🟠", "minor": "🟡", "observație": "🔵"}
+# In review mode, more minor findings than this on one PR block it like a major one.
+MAX_MINOR = 2
 # Thumbnails beyond this go as a plain list: a comment is not a gallery.
 MAX_THUMBS = 12
 
@@ -65,6 +67,18 @@ def load(path: str) -> list:
     except (OSError, ValueError):
         return []
     return data if isinstance(data, list) else []
+
+
+def severities(verify: list) -> list[str]:
+    return [f.get("severity") for v in verify if isinstance(v, dict) for f in v.get("findings") or []]
+
+
+def blocking(verify: list) -> tuple[int, int]:
+    """The findings that block the PR in review mode: the critical and major ones, and the minor
+    ones only when there are more than MAX_MINOR of them on the whole PR."""
+    sevs = severities(verify)
+    minor = sevs.count("minor")
+    return sum(sev in ("critic", "major") for sev in sevs), minor if minor > MAX_MINOR else 0
 
 
 def mentor_changes(repo: str, pr_sha: str, branch: str) -> tuple[str, list[str] | None]:
@@ -107,7 +121,7 @@ def build(repo: str, pr_sha: str, head: str, report: list, verify: list,
     modules = sorted(set(reports) | set(verifies) | sheet_modules | {f.split("/", 1)[0] for f in shots})
 
     lines = [MARKER, "## Mentor review" if review else "## Mentor", ""]
-    serious = 0
+    serious, minor = blocking(verify)
     for module in modules:
         r, v = reports.get(module, {}), verifies.get(module)
         if review:
@@ -127,7 +141,6 @@ def build(repo: str, pr_sha: str, head: str, report: list, verify: list,
                 lines.append("")
                 for f in findings:
                     sev = f.get("severity", "")
-                    serious += sev in ("critic", "major")
                     lines.append(f"- {SEVERITY.get(sev, '•')} **{sev or '?'}**: {f.get('text', '')}")
             lines.append("")
         elif module in sheet_modules:
@@ -155,14 +168,17 @@ def build(repo: str, pr_sha: str, head: str, report: list, verify: list,
     if not modules and not failed:
         lines += [f"Nimic de verificat la `{pr_sha[:9]}`: PR-ul nu schimbă funcțional niciun modul." if review
                   else f"Nimic de refăcut la `{pr_sha[:9]}`: fișele și capturile urmează deja codul.", ""]
-    elif serious and review:
-        lines += [f"Rămân **{serious}** constatări critice sau majore: check-ul `mentor / review` pică "
+    elif (serious or minor) and review:
+        left = " și ".join(filter(None, [f"**{serious}** constatări critice sau majore" if serious else "",
+                                         f"**{minor}** constatări minore (peste {MAX_MINOR})" if minor else ""]))
+        lines += [f"Rămân {left}: check-ul `mentor / review` pică "
                   "și nu vine `mentor-ok`. Fișa se face sau se completează local cu Mentor (`fisa-completa`), cu capturile, "
                   "și se împinge în PR.", ""]
     elif serious:
         lines += [f"Rămân **{serious}** constatări critice sau majore: fără `mentor-ok`, merge manual.", ""]
     elif not failed:
-        lines += ["Fără constatări critice sau majore.", ""]
+        lines += [f"Fără constatări critice sau majore și cel mult {MAX_MINOR} minore." if review
+                  else "Fără constatări critice sau majore.", ""]
     after = "" if review else f" · ramura după Mentor: `{head[:9]}`"
     lines.append(f"<sub>Rularea: [{run_url.rsplit('/', 1)[-1] or 'Actions'}]({run_url}) · "
                  f"push-ul verificat: `{pr_sha[:9]}`{after}</sub>")
@@ -181,14 +197,13 @@ def mentor_reviews(repo: str, number: str) -> list[dict]:
 
 
 def review_event(report: list, verify: list, job_ok: bool) -> str:
-    """REQUEST_CHANGES on a critical or major finding (those fail the `mentor / review` check);
-    APPROVE when every module has its sheet, the run checked all of them and nothing critical or
-    major is left; COMMENT otherwise (nothing to check, a module the check did not reach, a
+    """REQUEST_CHANGES on a critical or major finding, or on more than MAX_MINOR minor ones (those
+    fail the `mentor / review` check); APPROVE when every module has its sheet, the run checked all
+    of them and nothing of that is left; COMMENT otherwise (nothing to check, a module the check did not reach, a
     failed step)."""
     modules = {r.get("module"): r for r in report if isinstance(r, dict)}
     verifies = {v.get("module"): v for v in verify if isinstance(v, dict)}
-    severities = [f.get("severity") for v in verifies.values() for f in v.get("findings") or []]
-    if {"critic", "major"} & set(severities):
+    if any(blocking(verify)):
         return "REQUEST_CHANGES"
     if job_ok and modules \
             and all(r.get("sheet") and m in verifies for m, r in modules.items()):
@@ -225,6 +240,10 @@ def post_review(repo: str, number: str, pr_sha: str, report_path: str, verify_pa
 
 
 def main() -> None:
+    if sys.argv[1:2] == ["--blocking"]:
+        # For the workflow: how many findings block the PR (0: mentor-ok, the check passes).
+        print(sum(blocking(load(sys.argv[2]))))
+        return
     repo, number, branch, pr_sha, report_path, verify_path = sys.argv[1:7]
     if os.environ.get("MODE") == "review":
         post_review(repo, number, pr_sha, report_path, verify_path)

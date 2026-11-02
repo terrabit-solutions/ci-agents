@@ -38,6 +38,24 @@ class TestReviewEvent(unittest.TestCase):
     def test_minor_findings_still_approve(self):
         self.assertEqual(self.event(findings=[finding("minor"), finding("observație")]), "APPROVE")
 
+    def test_two_minor_findings_still_approve(self):
+        self.assertEqual(self.event(findings=[finding("minor")] * 2 + [finding("observație")] * 3), "APPROVE")
+
+    def test_more_than_two_minor_findings_request_changes(self):
+        # Gaps left in sections 5, 8 and 9 add up: the sheet is not approved with three of them.
+        self.assertEqual(self.event(findings=[finding("minor")] * 3), "REQUEST_CHANGES")
+
+    def test_minor_findings_add_up_across_modules(self):
+        report = [{"module": m, "sheet": True} for m in ("a", "b")]
+        verify = [{"module": "a", "findings": [finding("minor")] * 2}, {"module": "b", "findings": [finding("minor")]}]
+        self.assertEqual(pr_comment.review_event(report, verify, True), "REQUEST_CHANGES")
+
+    def test_blocking_count(self):
+        verify = [{"module": MODULE, "findings": [finding("major"), finding("minor"), finding("minor")]}]
+        self.assertEqual(pr_comment.blocking(verify), (1, 0))
+        verify[0]["findings"].append(finding("minor"))
+        self.assertEqual(pr_comment.blocking(verify), (1, 3))
+
     def test_missing_sheet_requests_changes(self):
         # PR 3872: the sheet is missing, a critical finding.
         self.assertEqual(self.event(sheet=False, findings=[finding("critic")]), "REQUEST_CHANGES")
