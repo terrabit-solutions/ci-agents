@@ -36,6 +36,10 @@ jobs:
             echo "PR from a fork ($HEAD_REPO): mirror it with fork-pr/mirror.sh after reading the diff."
             exit 1
           fi
-          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=success -f context=ci-gate \
-            -f description="Head on a branch of this repository" >/dev/null
+          # curl, not gh: the VPS runners have no gh.
+          curl -fsS -X POST -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/statuses/$SHA" \
+            -d '{"state": "success", "context": "ci-gate", "description": "Head on a branch of this repository"}' \
+            >/dev/null
           echo "ci-gate set on $SHA"
