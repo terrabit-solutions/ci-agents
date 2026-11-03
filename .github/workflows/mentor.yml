@@ -103,6 +103,17 @@ jobs:
           sparse-checkout: .github
           # Claude may read the workspace: keep the token out of .git/config.
           persist-credentials: false
+      # Right after the suite, before anything that can fail: Mentor's report on the PR
+      # (pr_comment.py) needs it even when the job fails at the next step.
+      - name: Checkout the Mentor scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: terrabit-solutions/ci-agents
+          ref: ${{ inputs.agents-ref }}
+          path: .ci-agents
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: mentor
       # Without the token in .git/config git cannot fetch a missing blob later, so the ones
       # select_modules, review_check and the PR diff read (the modules the PR changes, at
       # the merge base and in the PR commits) come here, with the token only in this
@@ -126,9 +137,21 @@ jobs:
             git rev-list --objects --missing=print "$base..$HEAD" | sed -n 's/^?//p'; } \
             | sort -u > "$RUNNER_TEMP/blobs"
           echo "$(wc -l < "$RUNNER_TEMP/blobs") blobs of the PR range"
-          if [ -s "$RUNNER_TEMP/blobs" ]; then
-            git fetch --no-tags --no-write-fetch-head --recurse-submodules=no \
-              --filter=blob:none --stdin origin < "$RUNNER_TEMP/blobs"
+          # As git's own lazy fetch (promisor-remote.c): without negotiation. With the default
+          # one the client sends its commits as "have", the base among them, and the server may
+          # leave out a wanted blob it can reach from them, as if the client had it: "bad
+          # revision" and "did not send all necessary objects" (bitshop#3520, a blob of the
+          # base, on the reused workspace of the runners).
+          if [ -s "$RUNNER_TEMP/blobs" ] && ! git -c fetch.negotiationAlgorithm=noop fetch \
+              --no-tags --no-write-fetch-head --recurse-submodules=no \
+              --filter=blob:none --stdin origin < "$RUNNER_TEMP/blobs"; then
+            # Still short: cat-file asks for each blob it lacks, one by one, through git's lazy
+            # fetch (the token is in the environment), and names those the server does not have.
+            echo "::warning::The batch fetch of the blobs failed; fetching the missing ones one by one."
+            if git cat-file --batch-check < "$RUNNER_TEMP/blobs" | grep ' missing$'; then
+              echo "::error::Blobs of the PR range that the server did not send."
+              exit 1
+            fi
           fi
       # mentor-ok says "the sheets of this PR are there and complete", for the automerge
       # workflow: it goes away now and comes back only if this run ends clean.
@@ -152,15 +175,6 @@ jobs:
           curl -fsS -o /dev/null -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/mentor-ok" 2>/dev/null || true
-      - name: Checkout the Mentor scripts
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: terrabit-solutions/ci-agents
-          ref: ${{ inputs.agents-ref }}
-          path: .ci-agents
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: mentor
       - name: Modules whose sheet must follow the PR
         id: select
         env:
