@@ -122,6 +122,16 @@ class TestPostReview(unittest.TestCase):
                           ("POST", "/repos/o/r/pulls/1/reviews")])
         self.assertEqual(calls[1][2]["event"], "REQUEST_CHANGES")
 
+    def test_failed_before_the_check_says_so(self):
+        # bitshop#3520: the blobs of the PR range did not come, no precheck nor verify file.
+        os.remove(self.report)
+        os.remove(self.verify)
+        with mock.patch.dict(os.environ, {"JOB_OK": "false"}):
+            calls = self.run_post([])
+        self.assertEqual(calls[0][2]["event"], "COMMENT")
+        self.assertIn("Au eșuat: pregătirea verificării", calls[0][2]["body"])
+        self.assertNotIn("Nimic de verificat", calls[0][2]["body"])
+
 
 if __name__ == "__main__":
     unittest.main()

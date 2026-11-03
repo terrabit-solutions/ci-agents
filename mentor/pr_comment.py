@@ -163,6 +163,10 @@ def build(repo: str, pr_sha: str, head: str, report: list, verify: list,
 
     failed = [name for name, result in (("capturile", screenshots), ("commit-ul capturilor", shots_commit))
               if result in ("failure", "cancelled")]
+    # The review job failed before it chose the modules (the checkout, the blobs of the PR
+    # range): "nothing to check" would hide it.
+    if review and not modules and os.environ.get("JOB_OK") == "false":
+        failed.append("pregătirea verificării")
     if failed:
         lines += [f"⚠️ Au eșuat: {', '.join(failed)}. Detalii în [rulare]({run_url}).", ""]
     if not modules and not failed:
