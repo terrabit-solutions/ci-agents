@@ -63,12 +63,29 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+    # A fetch whose HTTP/2 stream stalls hung for 3.5 minutes before failing ("curl 92 ... not
+    # closed cleanly", l10n_ro_ent PR 1051): below 1 KB/s for 60 s git now gives up, and
+    # actions/checkout retries it.
+    env:
+      GIT_HTTP_LOW_SPEED_LIMIT: "1000"
+      GIT_HTTP_LOW_SPEED_TIME: "60"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           # Argus may read the workspace: keep the token out of .git/config.
           persist-credentials: false
+          # Without the screenshots and the PDFs, half of the tree on l10n_ro_ent: Argus
+          # reviews the code. With blob:none only the blobs of the checked-out files come.
+          filter: blob:none
+          sparse-checkout: |
+            /*
+            !*.png
+            !*.jpg
+            !*.jpeg
+            !*.gif
+            !*.pdf
+          sparse-checkout-cone-mode: false
       # Argus reads the PR and comments through `gh`, which the runner may lack.
       - name: Install gh if missing
         env:
