@@ -121,17 +121,50 @@ jobs:
           python3 -m zipfile -e "$zip" "$RUNNER_TEMP/bun"
           chmod +x "$RUNNER_TEMP/bun/bun-linux-x64/bun"
           echo "path=$RUNNER_TEMP/bun/bun-linux-x64/bun" >> "$GITHUB_OUTPUT"
-      - name: Checkout Odoo core (odoo/ only, to check the ORM API)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: odoo/odoo
-          ref: ${{ inputs.odoo-version }}
-          path: .odoo-src
-          fetch-depth: 1
-          # Argus may read the workspace: keep the token out of .git/config.
-          persist-credentials: false
-          sparse-checkout: odoo
-          sparse-checkout-cone-mode: true
+      # Odoo core (odoo/ only, to check the ORM API), from a copy kept in the runner's tool
+      # cache. actions/checkout cloned odoo/odoo on every run with blob:none and downloaded
+      # the blobs of odoo/ in one go at `git checkout`, a step it does not retry: a stall
+      # there failed the review (bitshop PR 3517, "curl 28 ... could not fetch from promisor
+      # remote"). The copy is a sparse partial clone too, but the blobs it got stay between
+      # runs, so a run fetches only what changed and a retry resumes. If GitHub stays
+      # unreachable, the copy's older commit is used; without any, Argus reviews without it.
+      - name: Odoo core from the runner's cache
+        id: odoo
+        continue-on-error: true
+        env:
+          ODOO_VERSION: ${{ inputs.odoo-version }}
+        run: |
+          src="$RUNNER_TOOL_CACHE/odoo-src/$ODOO_VERSION"
+          retry() {
+            for i in 1 2 3; do
+              "$@" && return 0
+              echo "Attempt $i failed: $*" >&2
+              sleep $((i * 15))
+            done
+            return 1
+          }
+          # A job cancelled mid-fetch leaves its lock behind (one job at a time per runner).
+          rm -f "$src/.git/shallow.lock" "$src/.git/index.lock"
+          if [ ! -d "$src/.git" ]; then
+            rm -rf "$src" && mkdir -p "$src"
+            git -C "$src" init -q
+            git -C "$src" remote add origin https://github.com/odoo/odoo.git
+            git -C "$src" config remote.origin.promisor true
+            git -C "$src" config remote.origin.partialclonefilter blob:none
+            git -C "$src" sparse-checkout set --cone odoo
+          fi
+          if retry git -C "$src" fetch -q --depth=1 --no-tags --filter=blob:none origin \
+              "+refs/heads/$ODOO_VERSION:refs/remotes/origin/$ODOO_VERSION"; then
+            # Fetches the missing blobs of odoo/ in one batch; the ones a stalled attempt got
+            # stay, so the next attempt only fetches the rest.
+            retry git -C "$src" checkout -q --force -B "$ODOO_VERSION" "origin/$ODOO_VERSION" || exit 1
+          elif git -C "$src" rev-parse -q --verify HEAD >/dev/null && [ -d "$src/odoo" ]; then
+            echo "::warning::GitHub unreachable: Odoo core from the cache's older commit."
+          else
+            exit 1
+          fi
+          rm -rf .odoo-src && mkdir .odoo-src && cp -r "$src/odoo" .odoo-src/
+          echo "Odoo core $ODOO_VERSION at $(git -C "$src" rev-parse --short HEAD)"
       # Comments signed by the Argus GitHub App; the same token reads this repository.
       - name: Argus app token
         id: app
@@ -286,6 +319,7 @@ jobs:
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
             ODOO VERSION: ${{ inputs.odoo-version }}
+            ODOO CORE: ${{ steps.odoo.outcome == 'success' && '.odoo-src/odoo' || 'indisponibil la această rulare (rețea): nu afirma nimic despre API-ul ORM pe baza surselor Odoo' }}
 
             Fă review-ul acestui PR după regulile din .argus/REVIEW.md.
             Citește întâi fișierul acela și respectă-l întocmai.
