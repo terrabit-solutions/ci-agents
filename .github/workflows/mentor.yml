@@ -97,11 +97,16 @@ jobs:
           # The history without the old file contents: the screenshots make most of the
           # repository, and a full clone took minutes on a busy runner.
           filter: blob:none
+          # No module in the working tree yet: checking out every file of the suite fetched
+          # each blob of it (55 s for 3938 files on bitshop). The next step adds the modules
+          # of the PR.
+          sparse-checkout: .github
           # Claude may read the workspace: keep the token out of .git/config.
           persist-credentials: false
       # Without the token in .git/config git cannot fetch a missing blob later, so the ones
-      # select_modules, review_check and the PR diff read (the merge base and the PR
-      # commits) come here, in one fetch, with the token only in this step's environment.
+      # select_modules, review_check and the PR diff read (the modules the PR changes, at
+      # the merge base and in the PR commits) come here, with the token only in this
+      # step's environment.
       - name: The file contents of the PR range
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
@@ -109,17 +114,21 @@ jobs:
           TOKEN: ${{ github.token }}
         run: |
           base=$(git merge-base "$BASE" "$HEAD")
-          { git rev-list --objects --missing=print "$base^{tree}"
-            git rev-list --objects --missing=print "$base..$HEAD"; } \
-            | sed -n 's/^?//p' | sort -u > "$RUNNER_TEMP/blobs"
-          echo "$(wc -l < "$RUNNER_TEMP/blobs") missing blobs in the PR range"
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
+          git diff --no-renames --name-only "$base" "$HEAD" | sed -n 's|/.*||p' | sort -u > "$RUNNER_TEMP/dirs"
+          echo "$(wc -l < "$RUNNER_TEMP/dirs") folders changed in the PR"
+          # The modules of the PR in the working tree, their screenshots included.
+          xargs -r git sparse-checkout add < "$RUNNER_TEMP/dirs"
+          { xargs -r git ls-tree -r "$base" -- < "$RUNNER_TEMP/dirs" | awk '$2 == "blob" { print $3 }'
+            git rev-list --objects --missing=print "$base..$HEAD" | sed -n 's/^?//p'; } \
+            | sort -u > "$RUNNER_TEMP/blobs"
+          echo "$(wc -l < "$RUNNER_TEMP/blobs") blobs of the PR range"
           if [ -s "$RUNNER_TEMP/blobs" ]; then
-            auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
-            echo "::add-mask::$auth"
-            GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader \
-              GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
-              git fetch --no-tags --no-write-fetch-head --recurse-submodules=no \
-                --filter=blob:none --stdin origin < "$RUNNER_TEMP/blobs"
+            git fetch --no-tags --no-write-fetch-head --recurse-submodules=no \
+              --filter=blob:none --stdin origin < "$RUNNER_TEMP/blobs"
           fi
       # mentor-ok says "the sheets of this PR are there and complete", for the automerge
       # workflow: it goes away now and comes back only if this run ends clean.
