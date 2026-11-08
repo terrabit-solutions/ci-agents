@@ -94,7 +94,7 @@ jobs:
           GH_SHA256: "bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386"
         run: |
           if ! command -v gh >/dev/null; then
-            curl -fsSL -o "$RUNNER_TEMP/gh.tar.gz" \
+            curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 -o "$RUNNER_TEMP/gh.tar.gz" \
               "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz"
             echo "$GH_SHA256  $RUNNER_TEMP/gh.tar.gz" | sha256sum -c -
             tar -xzf "$RUNNER_TEMP/gh.tar.gz" -C "$RUNNER_TEMP"
@@ -114,7 +114,7 @@ jobs:
           zip="$RUNNER_TOOL_CACHE/bun/bun-${BUN_VERSION}-linux-x64.zip"
           mkdir -p "$(dirname "$zip")"
           if ! echo "$BUN_SHA256  $zip" | sha256sum -c --status - 2>/dev/null; then
-            curl -fsSL -o "$zip" \
+            curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 -o "$zip" \
               "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
             echo "$BUN_SHA256  $zip" | sha256sum -c -
           fi
