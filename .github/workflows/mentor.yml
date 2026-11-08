@@ -248,35 +248,28 @@ jobs:
           git diff "$BASE" "$HEAD" -- $mods > .mentor/pr.diff
       # The action's own Bun setup needs `unzip`, which the runner lacks.
       - name: Install Bun without unzip
-        if: steps.precheck.outputs.sheets > 0
         id: bun
         env:
-          RELEASE_API_TOKEN: ${{ github.token }}
           BUN_VERSION: "1.4.4"
-          # From SHASUMS256.txt of the release.
-          BUN_SHA256: "bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c"
+          # SHA-256 of bun-linux-x64-1.4.4.tgz, the official npm package @oven/bun-linux-x64
+          # (npm integrity sha512-CHbbkmHVM28T1GFq+6GL4Ao4ujwwYwj1CxFFwEFzLanPfNsId9AhbIP0Q4reWuWBkGimUkoQygrK7Rgjtj3vog==).
+          BUN_TGZ_SHA256: "93ca5a2abe45f3bcac6dd55baff8bb06c4ac824b70f89650b54e5c8b80dbef18"
         run: |
-          zip="$RUNNER_TOOL_CACHE/bun/bun-${BUN_VERSION}-linux-x64.zip"
-          mkdir -p "$(dirname "$zip")"
-          if ! echo "$BUN_SHA256  $zip" | sha256sum -c --status - 2>/dev/null; then
-            url="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
-            if ! curl -fsSL --retry 2 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 300 -o "$zip" "$url"; then
-              # On 08.11.2026 github.com/.../releases/download answered 504 for hours while the
-              # API served the same file: fall back to the release asset endpoint.
-              echo "::warning::$url failed, downloading it through the GitHub API"
-              id=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 -H "Authorization: Bearer $RELEASE_API_TOKEN" \
-                "https://api.github.com/repos/oven-sh/bun/releases/tags/bun-v${BUN_VERSION}" \
-                | python3 -c 'import json, sys; print(next(a["id"] for a in json.load(sys.stdin)["assets"] if a["name"] == sys.argv[1]))' \
-                  "bun-linux-x64.zip")
-              curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 \
-                -H "Authorization: Bearer $RELEASE_API_TOKEN" -H "Accept: application/octet-stream" \
-                -o "$zip" "https://api.github.com/repos/oven-sh/bun/releases/assets/$id"
-            fi
-            echo "$BUN_SHA256  $zip" | sha256sum -c -
+          # From npm, not GitHub Releases: on 08.11.2026 both github.com/.../releases/download
+          # and the release asset API answered 504 for hours. Only the archive is cached; it is
+          # checked on every run and extracted fresh, so a binary altered on the persistent
+          # runner is never used.
+          tgz="$RUNNER_TOOL_CACHE/bun/bun-linux-x64-${BUN_VERSION}.tgz"
+          mkdir -p "$(dirname "$tgz")"
+          if ! echo "$BUN_TGZ_SHA256  $tgz" | sha256sum -c --status - 2>/dev/null; then
+            curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 \
+              -o "$tgz" "https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-${BUN_VERSION}.tgz"
+            echo "$BUN_TGZ_SHA256  $tgz" | sha256sum -c -
           fi
-          python3 -m zipfile -e "$zip" "$RUNNER_TEMP/bun"
-          chmod +x "$RUNNER_TEMP/bun/bun-linux-x64/bun"
-          echo "path=$RUNNER_TEMP/bun/bun-linux-x64/bun" >> "$GITHUB_OUTPUT"
+          rm -rf "$RUNNER_TEMP/bun" && mkdir -p "$RUNNER_TEMP/bun"
+          tar -xzf "$tgz" -C "$RUNNER_TEMP/bun" package/bin/bun
+          chmod +x "$RUNNER_TEMP/bun/package/bin/bun"
+          echo "path=$RUNNER_TEMP/bun/package/bin/bun" >> "$GITHUB_OUTPUT"
       # claude-code-action posts the inline comments of the review in its post step with
       # its github_token, and the caller's workflow gives GITHUB_TOKEN only contents: read
       # (a reusable workflow cannot raise it): Mentor's app token does it, else the run
@@ -549,35 +542,28 @@ jobs:
           cp .mentor/plugin/ci-agents/mentor/MENTOR.md .mentor/MENTOR.md
       # The action's own Bun setup needs `unzip`, which the runner lacks.
       - name: Install Bun without unzip
-        if: steps.select.outputs.count != '0'
         id: bun
         env:
-          RELEASE_API_TOKEN: ${{ github.token }}
           BUN_VERSION: "1.4.4"
-          # From SHASUMS256.txt of the release.
-          BUN_SHA256: "bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c"
+          # SHA-256 of bun-linux-x64-1.4.4.tgz, the official npm package @oven/bun-linux-x64
+          # (npm integrity sha512-CHbbkmHVM28T1GFq+6GL4Ao4ujwwYwj1CxFFwEFzLanPfNsId9AhbIP0Q4reWuWBkGimUkoQygrK7Rgjtj3vog==).
+          BUN_TGZ_SHA256: "93ca5a2abe45f3bcac6dd55baff8bb06c4ac824b70f89650b54e5c8b80dbef18"
         run: |
-          zip="$RUNNER_TOOL_CACHE/bun/bun-${BUN_VERSION}-linux-x64.zip"
-          mkdir -p "$(dirname "$zip")"
-          if ! echo "$BUN_SHA256  $zip" | sha256sum -c --status - 2>/dev/null; then
-            url="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
-            if ! curl -fsSL --retry 2 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 300 -o "$zip" "$url"; then
-              # On 08.11.2026 github.com/.../releases/download answered 504 for hours while the
-              # API served the same file: fall back to the release asset endpoint.
-              echo "::warning::$url failed, downloading it through the GitHub API"
-              id=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 -H "Authorization: Bearer $RELEASE_API_TOKEN" \
-                "https://api.github.com/repos/oven-sh/bun/releases/tags/bun-v${BUN_VERSION}" \
-                | python3 -c 'import json, sys; print(next(a["id"] for a in json.load(sys.stdin)["assets"] if a["name"] == sys.argv[1]))' \
-                  "bun-linux-x64.zip")
-              curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 \
-                -H "Authorization: Bearer $RELEASE_API_TOKEN" -H "Accept: application/octet-stream" \
-                -o "$zip" "https://api.github.com/repos/oven-sh/bun/releases/assets/$id"
-            fi
-            echo "$BUN_SHA256  $zip" | sha256sum -c -
+          # From npm, not GitHub Releases: on 08.11.2026 both github.com/.../releases/download
+          # and the release asset API answered 504 for hours. Only the archive is cached; it is
+          # checked on every run and extracted fresh, so a binary altered on the persistent
+          # runner is never used.
+          tgz="$RUNNER_TOOL_CACHE/bun/bun-linux-x64-${BUN_VERSION}.tgz"
+          mkdir -p "$(dirname "$tgz")"
+          if ! echo "$BUN_TGZ_SHA256  $tgz" | sha256sum -c --status - 2>/dev/null; then
+            curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 \
+              -o "$tgz" "https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-${BUN_VERSION}.tgz"
+            echo "$BUN_TGZ_SHA256  $tgz" | sha256sum -c -
           fi
-          python3 -m zipfile -e "$zip" "$RUNNER_TEMP/bun"
-          chmod +x "$RUNNER_TEMP/bun/bun-linux-x64/bun"
-          echo "path=$RUNNER_TEMP/bun/bun-linux-x64/bun" >> "$GITHUB_OUTPUT"
+          rm -rf "$RUNNER_TEMP/bun" && mkdir -p "$RUNNER_TEMP/bun"
+          tar -xzf "$tgz" -C "$RUNNER_TEMP/bun" package/bin/bun
+          chmod +x "$RUNNER_TEMP/bun/package/bin/bun"
+          echo "path=$RUNNER_TEMP/bun/package/bin/bun" >> "$GITHUB_OUTPUT"
       # Three roles, each in its own session, so the check cannot be skipped: the author
       # writes here; the checker audits in sheet-check, after the screenshots, and on
       # critical or major findings the author fixes and the checker looks again, up to
@@ -785,35 +771,28 @@ jobs:
           cp .mentor/plugin/ci-agents/mentor/MENTOR.md .mentor/MENTOR.md
       # The action's own Bun setup needs `unzip`, which the runner lacks.
       - name: Install Bun without unzip
-        if: steps.select.outputs.count != '0'
         id: bun
         env:
-          RELEASE_API_TOKEN: ${{ github.token }}
           BUN_VERSION: "1.4.4"
-          # From SHASUMS256.txt of the release.
-          BUN_SHA256: "bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c"
+          # SHA-256 of bun-linux-x64-1.4.4.tgz, the official npm package @oven/bun-linux-x64
+          # (npm integrity sha512-CHbbkmHVM28T1GFq+6GL4Ao4ujwwYwj1CxFFwEFzLanPfNsId9AhbIP0Q4reWuWBkGimUkoQygrK7Rgjtj3vog==).
+          BUN_TGZ_SHA256: "93ca5a2abe45f3bcac6dd55baff8bb06c4ac824b70f89650b54e5c8b80dbef18"
         run: |
-          zip="$RUNNER_TOOL_CACHE/bun/bun-${BUN_VERSION}-linux-x64.zip"
-          mkdir -p "$(dirname "$zip")"
-          if ! echo "$BUN_SHA256  $zip" | sha256sum -c --status - 2>/dev/null; then
-            url="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
-            if ! curl -fsSL --retry 2 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 300 -o "$zip" "$url"; then
-              # On 08.11.2026 github.com/.../releases/download answered 504 for hours while the
-              # API served the same file: fall back to the release asset endpoint.
-              echo "::warning::$url failed, downloading it through the GitHub API"
-              id=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 -H "Authorization: Bearer $RELEASE_API_TOKEN" \
-                "https://api.github.com/repos/oven-sh/bun/releases/tags/bun-v${BUN_VERSION}" \
-                | python3 -c 'import json, sys; print(next(a["id"] for a in json.load(sys.stdin)["assets"] if a["name"] == sys.argv[1]))' \
-                  "bun-linux-x64.zip")
-              curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 \
-                -H "Authorization: Bearer $RELEASE_API_TOKEN" -H "Accept: application/octet-stream" \
-                -o "$zip" "https://api.github.com/repos/oven-sh/bun/releases/assets/$id"
-            fi
-            echo "$BUN_SHA256  $zip" | sha256sum -c -
+          # From npm, not GitHub Releases: on 08.11.2026 both github.com/.../releases/download
+          # and the release asset API answered 504 for hours. Only the archive is cached; it is
+          # checked on every run and extracted fresh, so a binary altered on the persistent
+          # runner is never used.
+          tgz="$RUNNER_TOOL_CACHE/bun/bun-linux-x64-${BUN_VERSION}.tgz"
+          mkdir -p "$(dirname "$tgz")"
+          if ! echo "$BUN_TGZ_SHA256  $tgz" | sha256sum -c --status - 2>/dev/null; then
+            curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 \
+              -o "$tgz" "https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-${BUN_VERSION}.tgz"
+            echo "$BUN_TGZ_SHA256  $tgz" | sha256sum -c -
           fi
-          python3 -m zipfile -e "$zip" "$RUNNER_TEMP/bun"
-          chmod +x "$RUNNER_TEMP/bun/bun-linux-x64/bun"
-          echo "path=$RUNNER_TEMP/bun/bun-linux-x64/bun" >> "$GITHUB_OUTPUT"
+          rm -rf "$RUNNER_TEMP/bun" && mkdir -p "$RUNNER_TEMP/bun"
+          tar -xzf "$tgz" -C "$RUNNER_TEMP/bun" package/bin/bun
+          chmod +x "$RUNNER_TEMP/bun/package/bin/bun"
+          echo "path=$RUNNER_TEMP/bun/package/bin/bun" >> "$GITHUB_OUTPUT"
       - name: Mentor checker - audits the sheets
         id: check
         if: steps.select.outputs.count != '0'
