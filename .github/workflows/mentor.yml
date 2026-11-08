@@ -258,7 +258,7 @@ jobs:
           zip="$RUNNER_TOOL_CACHE/bun/bun-${BUN_VERSION}-linux-x64.zip"
           mkdir -p "$(dirname "$zip")"
           if ! echo "$BUN_SHA256  $zip" | sha256sum -c --status - 2>/dev/null; then
-            curl -fsSL -o "$zip" \
+            curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 -o "$zip" \
               "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
             echo "$BUN_SHA256  $zip" | sha256sum -c -
           fi
@@ -547,7 +547,7 @@ jobs:
           zip="$RUNNER_TOOL_CACHE/bun/bun-${BUN_VERSION}-linux-x64.zip"
           mkdir -p "$(dirname "$zip")"
           if ! echo "$BUN_SHA256  $zip" | sha256sum -c --status - 2>/dev/null; then
-            curl -fsSL -o "$zip" \
+            curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 -o "$zip" \
               "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
             echo "$BUN_SHA256  $zip" | sha256sum -c -
           fi
@@ -771,7 +771,7 @@ jobs:
           zip="$RUNNER_TOOL_CACHE/bun/bun-${BUN_VERSION}-linux-x64.zip"
           mkdir -p "$(dirname "$zip")"
           if ! echo "$BUN_SHA256  $zip" | sha256sum -c --status - 2>/dev/null; then
-            curl -fsSL -o "$zip" \
+            curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 -o "$zip" \
               "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
             echo "$BUN_SHA256  $zip" | sha256sum -c -
           fi
