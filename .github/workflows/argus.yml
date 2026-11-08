@@ -89,62 +89,72 @@ jobs:
       # Argus reads the PR and comments through `gh`, which the runner may lack.
       - name: Install gh if missing
         env:
-          RELEASE_API_TOKEN: ${{ github.token }}
           GH_VERSION: "2.102.0"
-          # From gh_2.102.0_checksums.txt of the release.
-          GH_SHA256: "bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386"
+          # SHA-256 of gh_2.102.0_amd64.deb in the official apt repository (cli.github.com/packages).
+          GH_DEB_SHA256: "7e54a307f90afdc59796c325ec0c49fb09e6c18537727207a8ac7513584ea5b0"
         run: |
           if ! command -v gh >/dev/null; then
-            url="https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz"
-            if ! curl -fsSL --retry 2 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 300 -o "$RUNNER_TEMP/gh.tar.gz" "$url"; then
-              # On 08.11.2026 github.com/.../releases/download answered 504 for hours while the
-              # API served the same file: fall back to the release asset endpoint.
-              echo "::warning::$url failed, downloading it through the GitHub API"
-              id=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 -H "Authorization: Bearer $RELEASE_API_TOKEN" \
-                "https://api.github.com/repos/cli/cli/releases/tags/v${GH_VERSION}" \
-                | python3 -c 'import json, sys; print(next(a["id"] for a in json.load(sys.stdin)["assets"] if a["name"] == sys.argv[1]))' \
-                  "gh_${GH_VERSION}_linux_amd64.tar.gz")
+            # From the official apt repository, not GitHub Releases: on 08.11.2026 both
+            # github.com/.../releases/download and the release asset API answered 504 for hours.
+            # Only the .deb is cached (the tool cache persists on the self-hosted runners); it is
+            # checked on every run and extracted fresh, with Python (no dpkg or ar needed).
+            deb="$RUNNER_TOOL_CACHE/gh/gh_${GH_VERSION}_amd64.deb"
+            mkdir -p "$(dirname "$deb")"
+            if ! echo "$GH_DEB_SHA256  $deb" | sha256sum -c --status - 2>/dev/null; then
               curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 \
-                -H "Authorization: Bearer $RELEASE_API_TOKEN" -H "Accept: application/octet-stream" \
-                -o "$RUNNER_TEMP/gh.tar.gz" "https://api.github.com/repos/cli/cli/releases/assets/$id"
+                -o "$deb" "https://cli.github.com/packages/pool/main/g/gh/gh_${GH_VERSION}_amd64.deb"
+              echo "$GH_DEB_SHA256  $deb" | sha256sum -c -
             fi
-            echo "$GH_SHA256  $RUNNER_TEMP/gh.tar.gz" | sha256sum -c -
-            tar -xzf "$RUNNER_TEMP/gh.tar.gz" -C "$RUNNER_TEMP"
-            echo "$RUNNER_TEMP/gh_${GH_VERSION}_linux_amd64/bin" >> "$GITHUB_PATH"
+            rm -rf "$RUNNER_TEMP/gh" && mkdir -p "$RUNNER_TEMP/gh"
+            python3 - "$deb" "$RUNNER_TEMP/gh" <<'PY'
+          import io, os, sys, tarfile
+          deb, out = sys.argv[1], sys.argv[2]
+          with open(deb, "rb") as handle:
+              data = handle.read()
+          assert data[:8] == b"!<arch>\n", "not a .deb"
+          pos = 8
+          while pos < len(data):
+              name = data[pos:pos + 16].decode().strip().rstrip("/")
+              size = int(data[pos + 48:pos + 58])
+              pos += 60
+              if name.startswith("data.tar"):
+                  with tarfile.open(fileobj=io.BytesIO(data[pos:pos + size])) as archive:
+                      binary = archive.extractfile("./usr/bin/gh").read()
+                  with open(os.path.join(out, "gh"), "wb") as handle:
+                      handle.write(binary)
+                  os.chmod(os.path.join(out, "gh"), 0o755)
+                  break
+              pos += size + size % 2
+          else:
+              sys.exit("usr/bin/gh not found in the .deb")
+          PY
+            echo "$RUNNER_TEMP/gh" >> "$GITHUB_PATH"
           fi
-      # The action's own Bun setup needs `unzip`, which the runner lacks:
-      # extract with Python instead, once per runner (the tool cache persists).
+      # The action's own Bun setup needs `unzip`, which the runner lacks: install the npm
+      # archive with tar instead, downloaded once per runner (the tool cache persists).
       - name: Install Bun without unzip
         id: bun
         env:
-          RELEASE_API_TOKEN: ${{ github.token }}
           BUN_VERSION: "1.4.4"
-          # From SHASUMS256.txt of the release.
-          BUN_SHA256: "bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c"
+          # SHA-256 of bun-linux-x64-1.4.4.tgz, the official npm package @oven/bun-linux-x64
+          # (npm integrity sha512-CHbbkmHVM28T1GFq+6GL4Ao4ujwwYwj1CxFFwEFzLanPfNsId9AhbIP0Q4reWuWBkGimUkoQygrK7Rgjtj3vog==).
+          BUN_TGZ_SHA256: "93ca5a2abe45f3bcac6dd55baff8bb06c4ac824b70f89650b54e5c8b80dbef18"
         run: |
-          # Only the zip is cached; it is checked on every run and extracted
-          # fresh, so a binary altered on the persistent runner is never used.
-          zip="$RUNNER_TOOL_CACHE/bun/bun-${BUN_VERSION}-linux-x64.zip"
-          mkdir -p "$(dirname "$zip")"
-          if ! echo "$BUN_SHA256  $zip" | sha256sum -c --status - 2>/dev/null; then
-            url="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
-            if ! curl -fsSL --retry 2 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 300 -o "$zip" "$url"; then
-              # On 08.11.2026 github.com/.../releases/download answered 504 for hours while the
-              # API served the same file: fall back to the release asset endpoint.
-              echo "::warning::$url failed, downloading it through the GitHub API"
-              id=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 -H "Authorization: Bearer $RELEASE_API_TOKEN" \
-                "https://api.github.com/repos/oven-sh/bun/releases/tags/bun-v${BUN_VERSION}" \
-                | python3 -c 'import json, sys; print(next(a["id"] for a in json.load(sys.stdin)["assets"] if a["name"] == sys.argv[1]))' \
-                  "bun-linux-x64.zip")
-              curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 \
-                -H "Authorization: Bearer $RELEASE_API_TOKEN" -H "Accept: application/octet-stream" \
-                -o "$zip" "https://api.github.com/repos/oven-sh/bun/releases/assets/$id"
-            fi
-            echo "$BUN_SHA256  $zip" | sha256sum -c -
+          # From npm, not GitHub Releases: on 08.11.2026 both github.com/.../releases/download
+          # and the release asset API answered 504 for hours. Only the archive is cached; it is
+          # checked on every run and extracted fresh, so a binary altered on the persistent
+          # runner is never used.
+          tgz="$RUNNER_TOOL_CACHE/bun/bun-linux-x64-${BUN_VERSION}.tgz"
+          mkdir -p "$(dirname "$tgz")"
+          if ! echo "$BUN_TGZ_SHA256  $tgz" | sha256sum -c --status - 2>/dev/null; then
+            curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 \
+              -o "$tgz" "https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-${BUN_VERSION}.tgz"
+            echo "$BUN_TGZ_SHA256  $tgz" | sha256sum -c -
           fi
-          python3 -m zipfile -e "$zip" "$RUNNER_TEMP/bun"
-          chmod +x "$RUNNER_TEMP/bun/bun-linux-x64/bun"
-          echo "path=$RUNNER_TEMP/bun/bun-linux-x64/bun" >> "$GITHUB_OUTPUT"
+          rm -rf "$RUNNER_TEMP/bun" && mkdir -p "$RUNNER_TEMP/bun"
+          tar -xzf "$tgz" -C "$RUNNER_TEMP/bun" package/bin/bun
+          chmod +x "$RUNNER_TEMP/bun/package/bin/bun"
+          echo "path=$RUNNER_TEMP/bun/package/bin/bun" >> "$GITHUB_OUTPUT"
       # Odoo core (odoo/ only, to check the ORM API), from a copy kept in the runner's tool
       # cache. actions/checkout cloned odoo/odoo on every run with blob:none and downloaded
       # the blobs of odoo/ in one go at `git checkout`, a step it does not retry: a stall
