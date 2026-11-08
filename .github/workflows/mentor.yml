@@ -251,6 +251,7 @@ jobs:
         if: steps.precheck.outputs.sheets > 0
         id: bun
         env:
+          RELEASE_API_TOKEN: ${{ github.token }}
           BUN_VERSION: "1.4.4"
           # From SHASUMS256.txt of the release.
           BUN_SHA256: "bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c"
@@ -258,8 +259,19 @@ jobs:
           zip="$RUNNER_TOOL_CACHE/bun/bun-${BUN_VERSION}-linux-x64.zip"
           mkdir -p "$(dirname "$zip")"
           if ! echo "$BUN_SHA256  $zip" | sha256sum -c --status - 2>/dev/null; then
-            curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 -o "$zip" \
-              "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
+            url="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
+            if ! curl -fsSL --retry 2 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 300 -o "$zip" "$url"; then
+              # On 08.11.2026 github.com/.../releases/download answered 504 for hours while the
+              # API served the same file: fall back to the release asset endpoint.
+              echo "::warning::$url failed, downloading it through the GitHub API"
+              id=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 -H "Authorization: Bearer $RELEASE_API_TOKEN" \
+                "https://api.github.com/repos/oven-sh/bun/releases/tags/bun-v${BUN_VERSION}" \
+                | python3 -c 'import json, sys; print(next(a["id"] for a in json.load(sys.stdin)["assets"] if a["name"] == sys.argv[1]))' \
+                  "bun-linux-x64.zip")
+              curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 \
+                -H "Authorization: Bearer $RELEASE_API_TOKEN" -H "Accept: application/octet-stream" \
+                -o "$zip" "https://api.github.com/repos/oven-sh/bun/releases/assets/$id"
+            fi
             echo "$BUN_SHA256  $zip" | sha256sum -c -
           fi
           python3 -m zipfile -e "$zip" "$RUNNER_TEMP/bun"
@@ -540,6 +552,7 @@ jobs:
         if: steps.select.outputs.count != '0'
         id: bun
         env:
+          RELEASE_API_TOKEN: ${{ github.token }}
           BUN_VERSION: "1.4.4"
           # From SHASUMS256.txt of the release.
           BUN_SHA256: "bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c"
@@ -547,8 +560,19 @@ jobs:
           zip="$RUNNER_TOOL_CACHE/bun/bun-${BUN_VERSION}-linux-x64.zip"
           mkdir -p "$(dirname "$zip")"
           if ! echo "$BUN_SHA256  $zip" | sha256sum -c --status - 2>/dev/null; then
-            curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 -o "$zip" \
-              "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
+            url="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
+            if ! curl -fsSL --retry 2 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 300 -o "$zip" "$url"; then
+              # On 08.11.2026 github.com/.../releases/download answered 504 for hours while the
+              # API served the same file: fall back to the release asset endpoint.
+              echo "::warning::$url failed, downloading it through the GitHub API"
+              id=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 -H "Authorization: Bearer $RELEASE_API_TOKEN" \
+                "https://api.github.com/repos/oven-sh/bun/releases/tags/bun-v${BUN_VERSION}" \
+                | python3 -c 'import json, sys; print(next(a["id"] for a in json.load(sys.stdin)["assets"] if a["name"] == sys.argv[1]))' \
+                  "bun-linux-x64.zip")
+              curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 \
+                -H "Authorization: Bearer $RELEASE_API_TOKEN" -H "Accept: application/octet-stream" \
+                -o "$zip" "https://api.github.com/repos/oven-sh/bun/releases/assets/$id"
+            fi
             echo "$BUN_SHA256  $zip" | sha256sum -c -
           fi
           python3 -m zipfile -e "$zip" "$RUNNER_TEMP/bun"
@@ -764,6 +788,7 @@ jobs:
         if: steps.select.outputs.count != '0'
         id: bun
         env:
+          RELEASE_API_TOKEN: ${{ github.token }}
           BUN_VERSION: "1.4.4"
           # From SHASUMS256.txt of the release.
           BUN_SHA256: "bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c"
@@ -771,8 +796,19 @@ jobs:
           zip="$RUNNER_TOOL_CACHE/bun/bun-${BUN_VERSION}-linux-x64.zip"
           mkdir -p "$(dirname "$zip")"
           if ! echo "$BUN_SHA256  $zip" | sha256sum -c --status - 2>/dev/null; then
-            curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 -o "$zip" \
-              "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
+            url="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
+            if ! curl -fsSL --retry 2 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 300 -o "$zip" "$url"; then
+              # On 08.11.2026 github.com/.../releases/download answered 504 for hours while the
+              # API served the same file: fall back to the release asset endpoint.
+              echo "::warning::$url failed, downloading it through the GitHub API"
+              id=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 -H "Authorization: Bearer $RELEASE_API_TOKEN" \
+                "https://api.github.com/repos/oven-sh/bun/releases/tags/bun-v${BUN_VERSION}" \
+                | python3 -c 'import json, sys; print(next(a["id"] for a in json.load(sys.stdin)["assets"] if a["name"] == sys.argv[1]))' \
+                  "bun-linux-x64.zip")
+              curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 \
+                -H "Authorization: Bearer $RELEASE_API_TOKEN" -H "Accept: application/octet-stream" \
+                -o "$zip" "https://api.github.com/repos/oven-sh/bun/releases/assets/$id"
+            fi
             echo "$BUN_SHA256  $zip" | sha256sum -c -
           fi
           python3 -m zipfile -e "$zip" "$RUNNER_TEMP/bun"
