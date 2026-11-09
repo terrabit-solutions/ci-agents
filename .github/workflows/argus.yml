@@ -155,6 +155,32 @@ jobs:
           tar -xzf "$tgz" -C "$RUNNER_TEMP/bun" package/bin/bun
           chmod +x "$RUNNER_TEMP/bun/package/bin/bun"
           echo "path=$RUNNER_TEMP/bun/package/bin/bun" >> "$GITHUB_OUTPUT"
+      # Claude Code from npm, not the action's own `curl https://claude.ai/install.sh`, which
+      # fetches the 290 MB binary on every job: on 09.11.2026 that download kept dying with
+      # `Connection reset by peer` and Argus failed before the review. Same scheme as Bun: the
+      # archive is cached in the tool cache, checked on every run and extracted fresh. Keep
+      # CLAUDE_CODE_VERSION in step with the one claude-code-action pins (v1.0.261: 2.1.310).
+      - name: Install Claude Code
+        id: claude
+        env:
+          CLAUDE_CODE_VERSION: "2.1.310"
+          # SHA-256 of claude-code-linux-x64-2.1.310.tgz, the official npm package
+          # @anthropic-ai/claude-code-linux-x64 (npm integrity
+          # sha512-CuzpJrMBbqaR3+1SiLrBtPV3w/cFvcqBfhe9kNskzZ2Fm6KXa7v0l7tM+Ln6l5QLb79WoU0CcacXnYtsygbe6A==).
+          CLAUDE_CODE_TGZ_SHA256: "8c90b0170d08fdb370db282c61d74897b834fc2569dd14c35eb1e491212dc6de"
+        run: |
+          tgz="$RUNNER_TOOL_CACHE/claude-code/claude-code-linux-x64-${CLAUDE_CODE_VERSION}.tgz"
+          mkdir -p "$(dirname "$tgz")"
+          if ! echo "$CLAUDE_CODE_TGZ_SHA256  $tgz" | sha256sum -c --status - 2>/dev/null; then
+            curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 600 \
+              -o "$tgz" "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-x64/-/claude-code-linux-x64-${CLAUDE_CODE_VERSION}.tgz"
+            echo "$CLAUDE_CODE_TGZ_SHA256  $tgz" | sha256sum -c -
+          fi
+          rm -rf "$RUNNER_TEMP/claude-code" && mkdir -p "$RUNNER_TEMP/claude-code"
+          tar -xzf "$tgz" -C "$RUNNER_TEMP/claude-code" package/claude
+          chmod +x "$RUNNER_TEMP/claude-code/package/claude"
+          "$RUNNER_TEMP/claude-code/package/claude" --version
+          echo "path=$RUNNER_TEMP/claude-code/package/claude" >> "$GITHUB_OUTPUT"
       # Odoo core (odoo/ only, to check the ORM API), from a copy kept in the runner's tool
       # cache. actions/checkout cloned odoo/odoo on every run with blob:none and downloaded
       # the blobs of odoo/ in one go at `git checkout`, a step it does not retry: a stall
@@ -349,6 +375,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.app.outputs.token }}
           path_to_bun_executable: ${{ steps.bun.outputs.path }}
+          path_to_claude_code_executable: ${{ steps.claude.outputs.path }}
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
