@@ -537,21 +537,22 @@ jobs:
           echo "Argus: $blocking blocking, $important important, $minor minor."
           # The [blocant]/[important] comments Argus posted on this head count too, so a
           # misreported verdict can only hold the PR back, never approve it. Only threads
-          # still open count: GitHub moves a comment's commit to the new head while its
-          # line is unchanged, so a thread answered and resolved on an earlier push kept
-          # the PR red on every later head (l10n-romania#732). REST comments do not say
-          # whether their thread is resolved, hence GraphQL. The commit check also leaves
-          # out outdated threads (their line changed): the new review decides on those.
+          # still open count: a thread answered and resolved kept the PR red on every
+          # later head (l10n-romania#732). REST comments do not say whether their thread
+          # is resolved, hence GraphQL. Only threads posted on this head count, by
+          # originalCommit: GitHub moves a comment's commit to the new head while its
+          # line is unchanged, so an open thread from an earlier push, fixed elsewhere,
+          # turned a clean review red (bitshop#3764). The new review decides on those.
           flags=$(ghr graphql --paginate -F owner="${REPO%%/*}" -F repo="${REPO#*/}" -F number="$PR_NUMBER" \
             -f query='query($owner: String!, $repo: String!, $number: Int!, $endCursor: String) {
               repository(owner: $owner, name: $repo) { pullRequest(number: $number) {
                 reviewThreads(first: 100, after: $endCursor) {
                   pageInfo { hasNextPage endCursor }
-                  nodes { isResolved comments(first: 1) { nodes { author { login } body commit { oid } } } }
+                  nodes { isResolved comments(first: 1) { nodes { author { login } body originalCommit { oid } } } }
                 } } } }' \
             --jq '.data.repository.pullRequest.reviewThreads.nodes[]
               | select(.isResolved | not) | .comments.nodes[0]
-              | select(.author.login == "argus-terrabit" and .commit.oid == env.HEAD_SHA)
+              | select(.author.login == "argus-terrabit" and .originalCommit.oid == env.HEAD_SHA)
               | select(.body | test("^\\*\\*\\[(blocant|important)\\]"))
               | .body | capture("^\\*\\*\\[(?<s>blocant|important)\\]").s')
           inline_blocking=$(grep -c '^blocant$' <<< "$flags" || true)
