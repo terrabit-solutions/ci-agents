@@ -1,0 +1,67 @@
+name: Cached checkout
+description: >-
+  Some paths of a repository, from one clone kept in the runner's tool cache: a run only
+  fetches what changed since the last one, instead of a fresh actions/checkout. Nothing of
+  the token is left in the workspace (no .git, no config).
+
+inputs:
+  repository:
+    description: owner/name
+    required: true
+  ref:
+    description: Branch, tag or full commit SHA (a SHA already in the clone is not fetched again).
+    required: true
+  dest:
+    description: Directory the paths are extracted into, replaced on every run.
+    required: true
+  paths:
+    description: Paths of the repository to extract, one per line.
+    required: true
+  token:
+    description: Read token, for a private repository.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        REPO: ${{ inputs.repository }}
+        REF: ${{ inputs.ref }}
+        DEST: ${{ inputs.dest }}
+        PATHS: ${{ inputs.paths }}
+        TOKEN: ${{ inputs.token }}
+      run: |
+        dir="$RUNNER_TOOL_CACHE/cached-checkout/${REPO//\//_}"
+        if [ ! -d "$dir/.git" ]; then
+          rm -rf "$dir" && mkdir -p "$dir"
+          git -C "$dir" init -q
+          git -C "$dir" remote add origin "https://github.com/$REPO.git"
+        fi
+        # A job cancelled mid-fetch leaves its lock behind (one job at a time per runner).
+        rm -f "$dir/.git/shallow.lock" "$dir/.git/index.lock"
+        if [ -n "$TOKEN" ]; then
+          # Through the environment, not argv: the runners share one machine.
+          basic="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$basic"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic"
+        fi
+        rev=FETCH_HEAD
+        if [[ "$REF" =~ ^[0-9a-f]{40}$ ]] && git -C "$dir" cat-file -e "$REF^{commit}" 2>/dev/null; then
+          rev="$REF"
+        else
+          for i in 1 2 3; do
+            git -C "$dir" fetch -q --depth=1 --no-tags origin "$REF" && break
+            [ "$i" = 3 ] && exit 1
+            echo "Attempt $i failed: fetch $REPO $REF" >&2
+            sleep $((i * 10))
+          done
+        fi
+        rm -rf "$DEST" && mkdir -p "$DEST"
+        paths=()
+        while IFS= read -r line; do [ -n "$line" ] && paths+=("$line"); done <<< "$PATHS"
+        git -C "$dir" archive "$rev" -- "${paths[@]}" | tar -x -C "$DEST"
+        echo "$REPO $REF at $(git -C "$dir" rev-parse --short "$rev")"

@@ -106,14 +106,13 @@ jobs:
       # Right after the suite, before anything that can fail: Mentor's report on the PR
       # (pr_comment.py) needs it even when the job fails at the next step.
       - name: Checkout the Mentor scripts
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: terrabit-solutions/ci-agents/.github/actions/cached-checkout@main
         with:
           repository: terrabit-solutions/ci-agents
           ref: ${{ inputs.agents-ref }}
-          path: .ci-agents
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: mentor
+          dest: .ci-agents
+          paths: |
+            mentor
       # Without the token in .git/config git cannot fetch a missing blob later, so the ones
       # select_modules, review_check and the PR diff read (the modules the PR changes, at
       # the merge base and in the PR commits) come here, with the token only in this
@@ -223,15 +222,13 @@ jobs:
           permission-contents: read
       - name: Checkout the Terrabit plugin
         if: steps.precheck.outputs.sheets > 0
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: terrabit-solutions/ci-agents/.github/actions/cached-checkout@main
         with:
           repository: terrabit-solutions/terrabit-claude
           ref: main
           token: ${{ steps.read.outputs.token }}
-          path: .mentor/plugin
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: |
+          dest: .mentor/plugin
+          paths: |
             plugins/terrabit-odoo/skills/fisa-modul
             ci-agents/mentor
       # As in the sheet job: the skill and the rules under .mentor/, from terrabit-claude main,
@@ -485,14 +482,13 @@ jobs:
           repositories: l10n_ro_ent,pacioli,terrabit-claude
           permission-contents: read
       - name: Checkout the Mentor scripts
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: terrabit-solutions/ci-agents/.github/actions/cached-checkout@main
         with:
           repository: terrabit-solutions/ci-agents
           ref: ${{ inputs.agents-ref }}
-          path: .ci-agents
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: mentor
+          dest: .ci-agents
+          paths: |
+            mentor
       - name: Modules whose sheet must follow the PR
         id: select
         env:
@@ -515,37 +511,33 @@ jobs:
       # the references of Pacioli do not depend on the Odoo version: one branch, main
       - name: Checkout the RO accounting reference
         if: steps.select.outputs.count != '0'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: terrabit-solutions/ci-agents/.github/actions/cached-checkout@main
         with:
           repository: terrabit-solutions/pacioli
           ref: main
           token: ${{ steps.read.outputs.token }}
-          path: .mentor/pacioli
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: skills/contabilitate-ro
+          dest: .mentor/pacioli
+          paths: |
+            skills/contabilitate-ro
       - name: Checkout the model sheet
         if: steps.select.outputs.count != '0'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: terrabit-solutions/ci-agents/.github/actions/cached-checkout@main
         with:
           repository: terrabit-solutions/l10n_ro_ent
           ref: ${{ inputs.odoo-version }}
           token: ${{ steps.read.outputs.token }}
-          path: odoo-addons/l10n_ro_ent
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: l10n_ro_advance_invoice/readme
+          dest: odoo-addons/l10n_ro_ent
+          paths: |
+            l10n_ro_advance_invoice/readme
       - name: Checkout the Terrabit plugin
         if: steps.select.outputs.count != '0'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: terrabit-solutions/ci-agents/.github/actions/cached-checkout@main
         with:
           repository: terrabit-solutions/terrabit-claude
           ref: main
           token: ${{ steps.read.outputs.token }}
-          path: .mentor/plugin
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: |
+          dest: .mentor/plugin
+          paths: |
             plugins/terrabit-odoo/skills/fisa-modul
             plugins/terrabit-odoo/agents
             ci-agents/mentor
@@ -740,14 +732,13 @@ jobs:
           repositories: l10n_ro_ent,pacioli,terrabit-claude
           permission-contents: read
       - name: Checkout the Mentor scripts
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: terrabit-solutions/ci-agents/.github/actions/cached-checkout@main
         with:
           repository: terrabit-solutions/ci-agents
           ref: ${{ inputs.agents-ref }}
-          path: .ci-agents
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: mentor
+          dest: .ci-agents
+          paths: |
+            mentor
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: needs.sheet.outputs.count != '0'
         with:
@@ -771,37 +762,33 @@ jobs:
       # the references of Pacioli do not depend on the Odoo version: one branch, main
       - name: Checkout the RO accounting reference
         if: steps.select.outputs.count != '0'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: terrabit-solutions/ci-agents/.github/actions/cached-checkout@main
         with:
           repository: terrabit-solutions/pacioli
           ref: main
           token: ${{ steps.read.outputs.token }}
-          path: .mentor/pacioli
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: skills/contabilitate-ro
+          dest: .mentor/pacioli
+          paths: |
+            skills/contabilitate-ro
       - name: Checkout the model sheet
         if: steps.select.outputs.count != '0'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: terrabit-solutions/ci-agents/.github/actions/cached-checkout@main
         with:
           repository: terrabit-solutions/l10n_ro_ent
           ref: ${{ inputs.odoo-version }}
           token: ${{ steps.read.outputs.token }}
-          path: odoo-addons/l10n_ro_ent
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: l10n_ro_advance_invoice/readme
+          dest: odoo-addons/l10n_ro_ent
+          paths: |
+            l10n_ro_advance_invoice/readme
       - name: Checkout the Terrabit plugin
         if: steps.select.outputs.count != '0'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: terrabit-solutions/ci-agents/.github/actions/cached-checkout@main
         with:
           repository: terrabit-solutions/terrabit-claude
           ref: main
           token: ${{ steps.read.outputs.token }}
-          path: .mentor/plugin
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: |
+          dest: .mentor/plugin
+          paths: |
             plugins/terrabit-odoo/skills/fisa-modul
             plugins/terrabit-odoo/agents
             ci-agents/mentor
@@ -1659,14 +1646,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout the Mentor scripts
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: terrabit-solutions/ci-agents/.github/actions/cached-checkout@main
         with:
           repository: terrabit-solutions/ci-agents
           ref: ${{ inputs.agents-ref }}
-          path: .ci-agents
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: mentor
+          dest: .ci-agents
+          paths: |
+            mentor
       - name: Result of the run that made this commit
         env:
           GH_TOKEN: ${{ github.token }}
