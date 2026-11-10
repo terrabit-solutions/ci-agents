@@ -260,15 +260,55 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: gh api -X DELETE "repos/$REPO/issues/$PR_NUMBER/labels/argus-ok" --silent 2>/dev/null || true
-      - name: Checkout the shared Argus scripts
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: terrabit-solutions/ci-agents
-          ref: ${{ inputs.agents-ref }}
-          path: .ci-agents
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: argus
+      # The small shared repositories (these scripts, the rules, tb-odoo-lint) are kept as one
+      # clone each in the runner's tool cache: a run only fetches what changed since the last
+      # review (a new push on the same PR, or any other PR on this runner), instead of a fresh
+      # actions/checkout of each (~30 s). The helper stays in $RUNNER_TEMP for the rules step.
+      - name: Shared Argus scripts and lint, from the runner's cache
+        env:
+          AGENTS_REF: ${{ inputs.agents-ref }}
+          WITH_LINT: ${{ inputs.lint }}
+        run: |
+          cat > "$RUNNER_TEMP/cached-checkout.sh" <<'SH'
+          # cached_checkout <owner/repo> <ref> <path> <dest> [token]: <path> of <ref> into <dest>.
+          cached_checkout() {
+            local repo="$1" ref="$2" path="$3" dest="$4" token="${5:-}"
+            local dir="$RUNNER_TOOL_CACHE/argus-src/${repo//\//_}"
+            if [ ! -d "$dir/.git" ]; then
+              rm -rf "$dir" && mkdir -p "$dir"
+              git -C "$dir" init -q
+              git -C "$dir" remote add origin "https://github.com/$repo.git"
+            fi
+            # A job cancelled mid-fetch leaves its lock behind (one job at a time per runner).
+            rm -f "$dir/.git/shallow.lock" "$dir/.git/index.lock"
+            if [ -n "$token" ]; then
+              # Through the environment, not argv: the runners share one machine.
+              local basic
+              basic="$(printf 'x-access-token:%s' "$token" | base64 | tr -d '\n')"
+              echo "::add-mask::$basic"
+              export GIT_CONFIG_COUNT=1
+              export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+              export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic"
+            fi
+            local i
+            for i in 1 2 3; do
+              git -C "$dir" fetch -q --depth=1 --no-tags origin "$ref" && break
+              [ "$i" = 3 ] && return 1
+              echo "Attempt $i failed: fetch $repo $ref" >&2
+              sleep $((i * 10))
+            done
+            rm -rf "$dest" && mkdir -p "$dest"
+            git -C "$dir" archive FETCH_HEAD -- "$path" | tar -x -C "$dest"
+            echo "$repo $ref at $(git -C "$dir" rev-parse --short FETCH_HEAD)"
+          }
+          SH
+          . "$RUNNER_TEMP/cached-checkout.sh"
+          cached_checkout terrabit-solutions/ci-agents "$AGENTS_REF" argus .ci-agents
+          # tb-odoo-lint (Python stdlib only) at a fixed commit, v1.5.0.
+          if [ "$WITH_LINT" = "true" ]; then
+            cached_checkout dhongu/terrabit-pre-commit-hooks 9aea6d5acb3560a6ab13e43ec7ee421dc76461ae \
+              terrabit_pre_commit_hooks .tb-lint
+          fi
       # The rules stay private, in terrabit-claude: the same app, installed on the organization,
       # reads them for every suite, also one outside the organization.
       - name: Rules token
@@ -293,15 +333,11 @@ jobs:
           echo "::error::The app token still does not see $REPO after 3 minutes."
           exit 1
       - name: Checkout the shared Argus rules
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: terrabit-solutions/terrabit-claude
-          ref: main
-          token: ${{ steps.rules.outputs.token }}
-          path: .argus-rules
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: ci-agents/argus
+        env:
+          RULES_TOKEN: ${{ steps.rules.outputs.token }}
+        run: |
+          . "$RUNNER_TEMP/cached-checkout.sh"
+          cached_checkout terrabit-solutions/terrabit-claude main ci-agents/argus .argus-rules "$RULES_TOKEN"
       # The suite's own rules, from its base branch: the PR cannot change them.
       - name: Checkout the suite's rules from the base branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -326,17 +362,6 @@ jobs:
           # The inline comment buffer of the action's older runs, replayed by every later run
           # on this runner until now (see classify_inline_comments below).
           rm -f /tmp/inline-comments-buffer.jsonl
-      # tb-odoo-lint (Python stdlib only) at a fixed commit, v1.5.0.
-      - name: Checkout tb-odoo-lint
-        if: inputs.lint
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: dhongu/terrabit-pre-commit-hooks
-          ref: 9aea6d5acb3560a6ab13e43ec7ee421dc76461ae # v1.5.0
-          path: .tb-lint
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: terrabit_pre_commit_hooks
       # Its findings on the PR's files go to .argus/lint.json, for Argus to confirm or
       # reject. Advisory: a failure here leaves Argus to review as before.
       - name: Run tb-odoo-lint on the PR's files
