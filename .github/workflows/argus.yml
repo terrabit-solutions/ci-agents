@@ -290,16 +290,21 @@ jobs:
               export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
               export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic"
             fi
-            local i
-            for i in 1 2 3; do
-              git -C "$dir" fetch -q --depth=1 --no-tags origin "$ref" && break
-              [ "$i" = 3 ] && return 1
-              echo "Attempt $i failed: fetch $repo $ref" >&2
-              sleep $((i * 10))
-            done
+            local i rev=FETCH_HEAD
+            # A full commit SHA never changes: already in the clone, nothing to fetch.
+            if [[ "$ref" =~ ^[0-9a-f]{40}$ ]] && git -C "$dir" cat-file -e "$ref^{commit}" 2>/dev/null; then
+              rev="$ref"
+            else
+              for i in 1 2 3; do
+                git -C "$dir" fetch -q --depth=1 --no-tags origin "$ref" && break
+                [ "$i" = 3 ] && return 1
+                echo "Attempt $i failed: fetch $repo $ref" >&2
+                sleep $((i * 10))
+              done
+            fi
             rm -rf "$dest" && mkdir -p "$dest"
-            git -C "$dir" archive FETCH_HEAD -- "$path" | tar -x -C "$dest"
-            echo "$repo $ref at $(git -C "$dir" rev-parse --short FETCH_HEAD)"
+            git -C "$dir" archive "$rev" -- "$path" | tar -x -C "$dest"
+            echo "$repo $ref at $(git -C "$dir" rev-parse --short "$rev")"
           }
           SH
           . "$RUNNER_TEMP/cached-checkout.sh"
@@ -339,15 +344,23 @@ jobs:
           . "$RUNNER_TEMP/cached-checkout.sh"
           cached_checkout terrabit-solutions/terrabit-claude main ci-agents/argus .argus-rules "$RULES_TOKEN"
       # The suite's own rules, from its base branch: the PR cannot change them.
-      - name: Checkout the suite's rules from the base branch
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .argus-base
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: .github/argus
-          sparse-checkout-cone-mode: true
+      # Only one file is wanted (REVIEW.local.md), so no second checkout: the base commit is
+      # fetched into the workspace clone (a commit it nearly has already) and the file read from it.
+      - name: Read the suite's rules from the base branch
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          basic="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$basic"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic"
+          rm -rf .argus-base && mkdir -p .argus-base/.github/argus
+          git fetch -q --depth=1 --no-tags --filter=blob:none origin "$BASE_SHA"
+          if git cat-file -e "$BASE_SHA:.github/argus/REVIEW.local.md" 2>/dev/null; then
+            git show "$BASE_SHA:.github/argus/REVIEW.local.md" > .argus-base/.github/argus/REVIEW.local.md
+          fi
       - name: Prepare Argus rules
         run: |
           rm -f "$RUNNER_TEMP/argus-verdict"
