@@ -1,0 +1,22 @@
+name: cancel-on-merge
+
+# Cancels the runs still going on the head of a merged PR: the job lives in
+# terrabit-solutions/ci-agents. Copy as .github/workflows/cancel-on-merge.yml; for a suite
+# outside the org add `with: runs-on: '"ubuntu-latest"'`.
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - "19.0*"
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cancel:
+    uses: terrabit-solutions/ci-agents/.github/workflows/cancel-on-merge.yml@main
+    permissions:
+      actions: write
+      contents: read
