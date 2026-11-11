@@ -6,7 +6,7 @@ made once and reaches every suite.
 | Agent | What it does | Workflow |
 |---|---|---|
 | Argus | AI review of every PR, drafts included: approves a clean head, requests changes on a blocking issue, only comments when important ones are left, and its `argus / review` check fails while blocking or important issues are left (a suite may make it required). A draft with no blocking or important issue goes to Ready by itself (label `wip` keeps it a draft) | `.github/workflows/argus.yml` |
-| Mentor | `mode: review` (default): checks that each module the PR changes functionally has its consultant sheet, with the fisa-modul structure and a step for each change (`review_check.py` without AI, then one read-only Claude session), in one light job: no Odoo, nothing committed, the report as one PR review (Approve when every sheet is there and clean, Request changes on a critical or major finding or on more than 2 minor ones on the PR, Comment otherwise) and `mentor-ok` when clean; with any of those left the `mentor / review` check fails after the report, so a suite can make it a required check. `mode: full`: as the fisa-completa skill, in three jobs: writes or updates the consultant sheet of the modules a PR changes functionally, regenerates the screenshots whose screens changed or that the sheet calls for (view, wizard or OWL XML, the screenshot test, new steps in the sheet), then has the sheet audited against them, up to three rounds of fixes; all as commits on the PR, with the report as one PR comment | `.github/workflows/mentor.yml` |
+| Mentor | `mentor.yml` (review): checks that each module the PR changes functionally has its consultant sheet, with the fisa-modul structure and a step for each change (`review_check.py` without AI, then one read-only Claude session), in one light job: no Odoo, nothing committed, the report as one PR review (Approve when every sheet is there and clean, Request changes on a critical or major finding or on more than 2 minor ones on the PR, Comment otherwise) and `mentor-ok` when clean; with any of those left the `mentor / review` check fails after the report, so a suite can make it a required check. `mentor_full.yml`: as the fisa-completa skill, in three jobs: writes or updates the consultant sheet of the modules a PR changes functionally, regenerates the screenshots whose screens changed or that the sheet calls for (view, wizard or OWL XML, the screenshot test, new steps in the sheet), then has the sheet audited against them, up to three rounds of fixes; all as commits on the PR, with the report as one PR comment | `.github/workflows/mentor.yml` |
 | Pacioli | Pre-check of a PR labelled `needs-pacioli` (Argus adds it when a PR touches accounting entries, accounts or taxes): one read-only Claude session compares the entries, accounts and taxes of the diff with the RO accounting reference (`terrabit-solutions/pacioli`) and posts `## Pre-verificare Pacioli` with a proposed verdict, the findings (Dr/Cr, legal basis) and `Commit: <sha>`; again on every new head while the label stays. Advisory: the verdict that opens Argus's gate (`## Verificare Pacioli`) is still a person's, who removes the label. Never labels, approves or merges | `.github/workflows/pacioli.yml` |
 | Automerge | Merges a PR labelled `automerge` once Argus is clean (`argus-ok`), Mentor is done and clean (`mentor-ok`), nothing runs on its branch and every run on its head passed; `wip`, `needs-pacioli` and `no-merge` stop it. No AI | `.github/workflows/automerge.yml` |
 | ci-gate | Sets the `ci-gate` commit status on each PR whose head is a branch of the suite. The org ruleset on 18.0/19.0/20.0 requires it, so a PR from a fork (no workflow runs on it in a private repository) stays blocked until a maintainer reads the diff and runs `fork-pr/mirror.sh`, which mirrors it into `fork-pr/<n>` with a PR of its own: the whole CI runs there, on the fork's commit. No AI | `.github/workflows/ci-gate.yml` |
@@ -14,8 +14,8 @@ made once and reaches every suite.
 
 Both are reusable workflows (`workflow_call`), run on the self-hosted runners of the
 organization: the light jobs (Argus, Mentor's review, Mentor's sheet, the screenshots commit) on
-the ones labelled `agents`, kept for the agents, and Mentor's screenshots (Odoo + Chrome, `mode:
-full` only) on the `odoo` ones, with the tests. A suite passes `mode: full` to have Mentor write
+the ones labelled `agents`, kept for the agents, and Mentor's screenshots (Odoo + Chrome, `mentor_full.yml`
+only) on the `odoo` ones, with the tests. A suite calls `mentor_full.yml` instead of `mentor.yml` to have Mentor write
 the sheets and regenerate the screenshots again. A suite outside the organization (`dhongu/deltatech`) passes
 `runs-on: '"ubuntu-latest"'` and runs them on its own GitHub-hosted minutes.
 It also passes the secrets by name (`secrets: inherit` only works inside the organization).
@@ -40,7 +40,7 @@ of the PR's base branch.
 
 ```
 .github/workflows/argus.yml      calls ci-agents/.github/workflows/argus.yml@main
-.github/workflows/mentor.yml     calls ci-agents/.github/workflows/mentor.yml@main
+.github/workflows/mentor.yml     calls ci-agents/.github/workflows/mentor.yml@main (review), or mentor_full.yml@main (sheets and screenshots)
 .github/workflows/pacioli.yml    calls ci-agents/.github/workflows/pacioli.yml@main, on labeled/synchronize/reopened
 .github/workflows/automerge.yml  calls ci-agents/.github/workflows/automerge.yml@main, after each PR workflow
 .github/workflows/ci-gate.yml    calls ci-agents/.github/workflows/ci-gate.yml@main, on every PR, on every branch
