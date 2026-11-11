@@ -1,0 +1,55 @@
+name: cancel-on-merge
+
+# Cancels the runs still queued or in progress on the head of a PR that was just merged: their
+# result no longer matters (the nightly run checks the branch as a whole), and they hold the
+# runners. Called by .github/workflows/cancel-on-merge.yml of each suite, on `pull_request: closed`.
+# No AI. Only PRs from this repository (a fork's token cannot cancel runs), only when merged.
+# Not cancelled: `ci-gate` (a required status that must end) and this job itself.
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: >-
+          JSON runner labels, e.g. '"ubuntu-latest"' for a suite outside the org. Empty: the
+          org's VPS runners kept for the agents.
+        type: string
+        default: ""
+      keep-workflows:
+        description: Space-separated workflow names that are never cancelled.
+        type: string
+        default: ci-gate
+
+jobs:
+  cancel:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ fromJSON(inputs.runs-on || '["self-hosted", "linux", "agents"]') }}
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      KEEP: ${{ inputs.keep-workflows }}
+      SELF_RUN: ${{ github.run_id }}
+    steps:
+      - name: Cancel the runs of the merged head
+        run: |
+          cancelled=0
+          for status in queued in_progress waiting pending requested; do
+            gh api --paginate "repos/$REPO/actions/runs?head_sha=$HEAD_SHA&status=$status&per_page=100" \
+              --jq '.workflow_runs[] | [.id, .name] | @tsv' |
+            while IFS=$'\t' read -r id name; do
+              [ "$id" = "$SELF_RUN" ] && continue
+              case " $KEEP " in *" $name "*) continue ;; esac
+              if gh api -X POST "repos/$REPO/actions/runs/$id/cancel" >/dev/null 2>&1; then
+                echo "cancelled $id ($name)"
+              else
+                echo "could not cancel $id ($name)"
+              fi
+            done
+          done

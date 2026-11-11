@@ -10,6 +10,7 @@ made once and reaches every suite.
 | Pacioli | Pre-check of a PR labelled `needs-pacioli` (Argus adds it when a PR touches accounting entries, accounts or taxes): one read-only Claude session compares the entries, accounts and taxes of the diff with the RO accounting reference (`terrabit-solutions/pacioli`) and posts `## Pre-verificare Pacioli` with a proposed verdict, the findings (Dr/Cr, legal basis) and `Commit: <sha>`; again on every new head while the label stays. Advisory: the verdict that opens Argus's gate (`## Verificare Pacioli`) is still a person's, who removes the label. Never labels, approves or merges | `.github/workflows/pacioli.yml` |
 | Automerge | Merges a PR labelled `automerge` once Argus is clean (`argus-ok`), Mentor is done and clean (`mentor-ok`), nothing runs on its branch and every run on its head passed; `wip`, `needs-pacioli` and `no-merge` stop it. No AI | `.github/workflows/automerge.yml` |
 | ci-gate | Sets the `ci-gate` commit status on each PR whose head is a branch of the suite. The org ruleset on 18.0/19.0/20.0 requires it, so a PR from a fork (no workflow runs on it in a private repository) stays blocked until a maintainer reads the diff and runs `fork-pr/mirror.sh`, which mirrors it into `fork-pr/<n>` with a PR of its own: the whole CI runs there, on the fork's commit. No AI | `.github/workflows/ci-gate.yml` |
+| cancel-on-merge | When a PR of the suite is merged, cancels the runs still queued or in progress on its head (tests, Argus, Mentor, ...), except `ci-gate`: their result no longer matters and they hold the runners. No AI | `.github/workflows/cancel-on-merge.yml` |
 
 Both are reusable workflows (`workflow_call`), run on the self-hosted runners of the
 organization: the light jobs (Argus, Mentor's review, Mentor's sheet, the screenshots commit) on
@@ -43,6 +44,7 @@ of the PR's base branch.
 .github/workflows/pacioli.yml    calls ci-agents/.github/workflows/pacioli.yml@main, on labeled/synchronize/reopened
 .github/workflows/automerge.yml  calls ci-agents/.github/workflows/automerge.yml@main, after each PR workflow
 .github/workflows/ci-gate.yml    calls ci-agents/.github/workflows/ci-gate.yml@main, on every PR, on every branch
+.github/workflows/cancel-on-merge.yml  calls ci-agents/.github/workflows/cancel-on-merge.yml@main, on `pull_request: closed`
 .github/argus/REVIEW.local.md    optional: the suite's own review rules, read after the shared rules
 .github/mentor/private_repos.sh  the private clones of its test.yml (the only code with credentials)
 .github/mentor/install.sh        what its test.yml installs before `pip install -r`
