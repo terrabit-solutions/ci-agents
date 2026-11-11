@@ -120,7 +120,7 @@ def build(repo: str, pr_sha: str, head: str, report: list, verify: list,
     sheet_modules = {f.split("/", 1)[0] for f in sheets}
     modules = sorted(set(reports) | set(verifies) | sheet_modules | {f.split("/", 1)[0] for f in shots})
 
-    lines = [MARKER, "## Mentor review" if review else "## Mentor", ""]
+    lines = [MARKER, ""] if review else [MARKER, "## Mentor", ""]
     serious, minor = blocking(verify)
     for module in modules:
         r, v = reports.get(module, {}), verifies.get(module)
