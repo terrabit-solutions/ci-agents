@@ -553,8 +553,8 @@ jobs:
             --jq '.data.repository.pullRequest.reviewThreads.nodes[]
               | select(.isResolved | not) | .comments.nodes[0]
               | select(.author.login == "argus-terrabit" and .originalCommit.oid == env.HEAD_SHA)
-              | select(.body | test("^\\*\\*\\[(blocant|important)\\]"))
-              | .body | capture("^\\*\\*\\[(?<s>blocant|important)\\]").s')
+              | select(.body | test("^(?:\\*\\*\\[|(?:🔴|🟠) \\*\\*)(blocant|important)"))
+              | .body | capture("^(?:\\*\\*\\[|(?:🔴|🟠) \\*\\*)(?<s>blocant|important)").s')
           inline_blocking=$(grep -c '^blocant$' <<< "$flags" || true)
           inline_important=$(grep -c '^important$' <<< "$flags" || true)
           [ "$inline_blocking" -gt "$blocking" ] && blocking=$inline_blocking
