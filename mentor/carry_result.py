@@ -7,7 +7,7 @@ de exemplu la capturi. Scriptul coboară din capul PR-ului peste commit-urile Me
 commit-ul programatorului, găsește rularea Mentor de pe el și pică dacă acolo au picat
 fișa, capturile, commit-ul lor sau verificarea fișei.
 
-Folosire (în jobul carry din mentor.yml; GH_TOKEN, HEAD, BRANCH, WORKFLOW_REF din env):
+Folosire (în jobul carry din mentor_full.yml; GH_TOKEN, HEAD, BRANCH, WORKFLOW_REF din env):
     python3 -I carry_result.py
 """
 from __future__ import annotations
