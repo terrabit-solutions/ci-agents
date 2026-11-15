@@ -10,6 +10,10 @@ are fișa consultant și că ea respectă structura din `fisa-modul`. Partea ace
   la care fișa trimite și care nu e în modul: major;
 - o captură `NN_*.png` din modul la care fișa nu trimite: minor.
 
+Cheia `consultant_sheet` din manifest schimbă ce se cere: `"simple"` e o fișă fără capturi (nu se
+cer imagini la pași și nu se raportează capturile nefolosite), `"none"` înseamnă că modulul nu are
+nevoie de fișă (nicio constatare). Fără cheie, fișa e `"full"`.
+
 Dacă pașii acoperă tot ce schimbă PR-ul judecă recenzentul (Claude), după aceste verificări.
 
 Folosire (din rădăcina repo-ului suitei):
@@ -20,6 +24,7 @@ recenzentului și scrie formatul `.mentor-verify.json`: [{"module", "verdict", "
 """
 from __future__ import annotations
 
+import ast
 import json
 import re
 import subprocess
@@ -34,6 +39,7 @@ STEP = re.compile(r"^###\s+Pasul\b.*$", re.M)
 SHOT_REF = re.compile(r"\(([^()\s]+\.png)\)")
 # The screenshots of the flow (01_..., 02_...), not the icon, the banner or USAGE's images.
 FLOW_SHOT = re.compile(r"^\d{2}_.+\.png$")
+SHEET_MODES = ("full", "simple", "none")
 
 
 def finding(severity: str, text: str) -> dict:
@@ -50,11 +56,24 @@ def section(text: str, number: int) -> str:
     return ""
 
 
+def sheet_mode(module: str) -> str:
+    """`consultant_sheet` from the module manifest: full (default), simple or none."""
+    try:
+        manifest = ast.literal_eval(Path(module, "__manifest__.py").read_text(encoding="utf-8"))
+    except (OSError, ValueError, SyntaxError):
+        return "full"
+    mode = manifest.get("consultant_sheet") if isinstance(manifest, dict) else None
+    return mode if mode in SHEET_MODES else "full"
+
+
 def check_module(module: str, changed: set[str]) -> dict:
     path = Path(module, FISA)
+    mode = sheet_mode(module)
     result = {"module": module, "sheet": path.is_file(), "sheet_changed": f"{module}/{FISA}" in changed,
-              "findings": []}
+              "consultant_sheet": mode, "findings": []}
     findings = result["findings"]
+    if mode == "none":
+        return result
     if not result["sheet"]:
         findings.append(finding("critic", f"Lipsește fișa consultant `{FISA}`: PR-ul schimbă modulul "
                                           "funcțional, iar fișa nu există. Se face cu Mentor local (fisa-completa)."))
@@ -71,7 +90,7 @@ def check_module(module: str, changed: set[str]) -> dict:
     if 6 in present and not steps:
         findings.append(finding("major", "Secțiunea 6 (Flux de utilizare) n-are niciun pas `### Pasul N`."))
     no_image = []
-    for i, m in enumerate(steps):
+    for i, m in enumerate(steps if mode == "full" else []):
         end = steps[i + 1].start() if i + 1 < len(steps) else len(flow)
         body = flow[m.end():end]
         # A step that ends in an XML excerpt instead of a screenshot is fine (fisa-modul).
@@ -90,7 +109,7 @@ def check_module(module: str, changed: set[str]) -> dict:
         findings.append(finding("major", "Capturi la care fișa trimite și care nu sunt în modul: "
                                 + ", ".join(f"`{s}`" for s in absent) + "."))
     orphans = sorted(s for s in shots - refs if FLOW_SHOT.match(s))
-    if orphans:
+    if orphans and mode == "full":
         findings.append(finding("minor", "Capturi din modul nefolosite în fișă: "
                                 + ", ".join(f"`{s}`" for s in orphans) + "."))
     return result
@@ -121,6 +140,8 @@ def merge(precheck_path: str, review_path: str) -> list:
         if review:
             findings += review.get("findings") or []
             verdict = review.get("verdict") or "?"
+        elif pre.get("consultant_sheet") == "none":
+            verdict = "fără fișă (consultant_sheet: none)"
         elif pre.get("sheet"):
             verdict = "NEVERIFICATĂ (recenzentul n-a raportat)"
             findings.append(finding("major", "Recenzentul n-a raportat: acoperirea pașilor n-a fost verificată."))
