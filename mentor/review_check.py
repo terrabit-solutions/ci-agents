@@ -5,7 +5,8 @@ Mentor review nu scrie nimic pe PR: pentru fiecare modul schimbat funcțional ve
 are fișa consultant și că ea respectă structura din `fisa-modul`. Partea aceasta e deterministă:
 
 - fișa `readme/FISA_CONSULTANT.md` lipsește: critic (restul nu se mai verifică);
-- lipsesc secțiuni numerotate 1–11 sau secțiunea 6 n-are niciun `### Pasul`: major;
+- lipsesc secțiuni numerotate 1–11 sau secțiunea 6 n-are niciun pas (`### Pasul`, iar la un modul
+  pentru altă țară `### Step`): major;
 - un pas din secțiunea 6 fără imagine `![]()`, un placeholder `[SCREENSHOT:` rămas sau o captură
   la care fișa trimite și care nu e în modul: major;
 - o captură `NN_*.png` din modul la care fișa nu trimite: minor.
@@ -13,6 +14,14 @@ are fișa consultant și că ea respectă structura din `fisa-modul`. Partea ace
 Cheia `consultant_sheet` din manifest schimbă ce se cere: `"simple"` e o fișă fără capturi (nu se
 cer imagini la pași și nu se raportează capturile nefolosite), `"none"` înseamnă că modulul nu are
 nevoie de fișă (nicio constatare). Fără cheie, fișa e `"full"`.
+
+Limba fișei urmează țara modulului, din cheia `countries` a manifestului: un modul cu `countries`
+fără `ro` (de ex. `["sk"]`) are fișa în engleză, cu pașii `### Step N` și capturile în
+`static/description/en/` (interfața engleză, aceleași ca la `readme/USAGE.md`); un modul fără
+`countries` sau cu `ro` între ele are fișa în română, cu `### Pasul N` și capturile în
+`static/description/` sau `readme/screenshots/`. Un modul pentru altă țară acceptă și forma veche
+(fișă în română), pentru fișele făcute înainte de regulă. Titlurile secțiunilor 1–11 se numără la fel în
+ambele limbi.
 
 Dacă pașii acoperă tot ce schimbă PR-ul judecă recenzentul (Claude), după aceste verificări.
 
@@ -32,10 +41,17 @@ import sys
 from pathlib import Path
 
 FISA = "readme/FISA_CONSULTANT.md"
-SHOTS = ("static/description/", "readme/screenshots/")
+# Per language of the sheet: the headings of a step and where its screenshots are. The English
+# sheets (modules for other countries) have the screenshots in en/, only in English. A module for
+# another country keeps accepting the Romanian layout (`### Pasul`, screenshots in
+# static/description/), because the sheets made before this rule are in Romanian.
+LANGUAGES = {
+    "ro": {"steps": ("Pasul",), "shots": ("static/description/", "readme/screenshots/")},
+    "en": {"steps": ("Step", "Pasul"), "shots": ("static/description/en/", "static/description/",
+                                                   "readme/screenshots/")},
+}
 SECTIONS = range(1, 12)
 SECTION = re.compile(r"^##\s+(\d+)\.", re.M)
-STEP = re.compile(r"^###\s+Pasul\b.*$", re.M)
 SHOT_REF = re.compile(r"\(([^()\s]+\.png)\)")
 # The screenshots of the flow (01_..., 02_...), not the icon, the banner or USAGE's images.
 FLOW_SHOT = re.compile(r"^\d{2}_.+\.png$")
@@ -56,21 +72,35 @@ def section(text: str, number: int) -> str:
     return ""
 
 
-def sheet_mode(module: str) -> str:
-    """`consultant_sheet` from the module manifest: full (default), simple or none."""
+def manifest_of(module: str) -> dict:
     try:
         manifest = ast.literal_eval(Path(module, "__manifest__.py").read_text(encoding="utf-8"))
     except (OSError, ValueError, SyntaxError):
-        return "full"
-    mode = manifest.get("consultant_sheet") if isinstance(manifest, dict) else None
+        return {}
+    return manifest if isinstance(manifest, dict) else {}
+
+
+def sheet_mode(module: str) -> str:
+    """`consultant_sheet` from the module manifest: full (default), simple or none."""
+    mode = manifest_of(module).get("consultant_sheet")
     return mode if mode in SHEET_MODES else "full"
+
+
+def sheet_language(module: str) -> str:
+    """`en` for a module made for other countries (`countries` without `ro`), else `ro`."""
+    countries = manifest_of(module).get("countries")
+    if isinstance(countries, (list, tuple)) and countries and "ro" not in {str(c).lower() for c in countries}:
+        return "en"
+    return "ro"
 
 
 def check_module(module: str, changed: set[str]) -> dict:
     path = Path(module, FISA)
     mode = sheet_mode(module)
+    lang = sheet_language(module)
+    rules = LANGUAGES[lang]
     result = {"module": module, "sheet": path.is_file(), "sheet_changed": f"{module}/{FISA}" in changed,
-              "consultant_sheet": mode, "findings": []}
+              "consultant_sheet": mode, "sheet_language": lang, "findings": []}
     findings = result["findings"]
     if mode == "none":
         return result
@@ -86,9 +116,10 @@ def check_module(module: str, changed: set[str]) -> dict:
         findings.append(finding("major", f"Lipsesc secțiunile {', '.join(missing)} din structura fișei (1–11)."))
 
     flow = section(text, 6)
-    steps = list(STEP.finditer(flow))
+    steps = list(re.finditer(rf"^###\s+(?:{'|'.join(rules['steps'])})\b.*$", flow, re.M))
     if 6 in present and not steps:
-        findings.append(finding("major", "Secțiunea 6 (Flux de utilizare) n-are niciun pas `### Pasul N`."))
+        findings.append(finding("major", f"Secțiunea 6 (Flux de utilizare) n-are niciun pas `### {rules['steps'][0]} N`"
+                                         + (" (fișa unui modul pentru altă țară e în engleză)." if lang == "en" else ".")))
     no_image = []
     for i, m in enumerate(steps if mode == "full" else []):
         end = steps[i + 1].start() if i + 1 < len(steps) else len(flow)
@@ -103,12 +134,19 @@ def check_module(module: str, changed: set[str]) -> dict:
         findings.append(finding("major", "Fișa are încă placeholdere `[SCREENSHOT: ...]`."))
 
     refs = {Path(r).name for r in SHOT_REF.findall(text)}
-    shots = {p.name for d in SHOTS for p in Path(module, d).glob("*.png")}
+    shots_by_dir = {d: {p.name for p in Path(module, d).glob("*.png")} for d in rules["shots"]}
+    shots = set().union(*shots_by_dir.values())
     absent = sorted(refs - shots)
     if absent:
         findings.append(finding("major", "Capturi la care fișa trimite și care nu sunt în modul: "
                                 + ", ".join(f"`{s}`" for s in absent) + "."))
-    orphans = sorted(s for s in shots - refs if FLOW_SHOT.match(s))
+    scanned = shots
+    if lang == "en":
+        # only the folders the sheet refers to: the other ones (the English set of a Romanian
+        # sheet, which USAGE.md uses) are not its screenshots
+        used = [d for d, names in shots_by_dir.items() if names & refs] or [rules["shots"][0]]
+        scanned = set().union(*(shots_by_dir[d] for d in used))
+    orphans = sorted(s for s in scanned - refs if FLOW_SHOT.match(s))
     if orphans and mode == "full":
         findings.append(finding("minor", "Capturi din modul nefolosite în fișă: "
                                 + ", ".join(f"`{s}`" for s in orphans) + "."))
