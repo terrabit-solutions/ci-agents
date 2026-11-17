@@ -83,6 +83,10 @@ jobs:
           persist-credentials: false
           # Without the screenshots and the PDFs, half of the tree on l10n_ro_ent: Argus
           # reviews the code. With blob:none only the blobs of the checked-out files come.
+          # The icon and the banner of each module stay (static/description/*.png, two small
+          # files per module): the icon and banner rules open them. The rest of the images
+          # are listed in .argus/images.txt, so a missing file is not mistaken for an image
+          # left out here (l10n-germany#6: index.html "refers to PNGs that do not exist").
           filter: blob:none
           sparse-checkout: |
             /*
@@ -91,6 +95,7 @@ jobs:
             !*.jpeg
             !*.gif
             !*.pdf
+            /*/static/description/*.png
           sparse-checkout-cone-mode: false
       - name: Pause before the second checkout attempt
         if: steps.checkout.outcome == 'failure'
@@ -109,6 +114,7 @@ jobs:
             !*.jpeg
             !*.gif
             !*.pdf
+            /*/static/description/*.png
           sparse-checkout-cone-mode: false
       # Argus reads the PR and comments through `gh`, which the runner may lack.
       - name: Install gh if missing
@@ -396,6 +402,14 @@ jobs:
           fi
           rm -rf .argus-base .argus-rules .ci-agents
           chmod +x .argus/*.sh .argus/inline.py
+          # Every image and PDF of the tree, checked out or not: the trees came with the
+          # checkout (blob:none drops only blobs), so this needs no download.
+          git ls-tree -r --name-only HEAD | grep -iE '\.(png|jpe?g|gif|pdf)$' > .argus/images.txt || true
+          echo "$(wc -l < .argus/images.txt) images and PDFs listed in .argus/images.txt."
+          # Only the comments of this attempt count in the verdict: a re-run on the same head
+          # kept the open thread of the earlier attempt, which the new review no longer
+          # reported, and stayed red (l10n-germany#6). 30 s back for the runner's clock.
+          echo "REVIEW_STARTED=$(date -u -d '30 seconds ago' +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
           # The inline comment buffer of the action's older runs, replayed by every later run
           # on this runner until now (see classify_inline_comments below).
           rm -f /tmp/inline-comments-buffer.jsonl
@@ -446,6 +460,11 @@ jobs:
 
             Fă review-ul acestui PR după regulile din .argus/REVIEW.md.
             Citește întâi fișierul acela și respectă-l întocmai.
+
+            Imaginile și PDF-urile nu sunt în workspace, în afară de
+            `<modul>/static/description/*.png` (iconița și bannerul). Lista tuturor celor din
+            arbore e în `.argus/images.txt`: înainte să spui că o imagine lipsește (referită din
+            `index.html`, manifest, readme), caut-o acolo cu Grep. Dacă e în listă, există.
 
             Comentariile pe linie le pui numai cu `.argus/inline.py` (unealta MCP de
             comentarii inline nu mai e disponibilă), un apel pe problemă:
@@ -543,16 +562,20 @@ jobs:
           # originalCommit: GitHub moves a comment's commit to the new head while its
           # line is unchanged, so an open thread from an earlier push, fixed elsewhere,
           # turned a clean review red (bitshop#3764). The new review decides on those.
+          # Likewise only threads opened by this attempt (REVIEW_STARTED): a re-run on the
+          # same head decides again; a finding still real is in its verdict, since inline.py
+          # answers "already commented" and Argus counts it (l10n-germany#6).
           flags=$(ghr graphql --paginate -F owner="${REPO%%/*}" -F repo="${REPO#*/}" -F number="$PR_NUMBER" \
             -f query='query($owner: String!, $repo: String!, $number: Int!, $endCursor: String) {
               repository(owner: $owner, name: $repo) { pullRequest(number: $number) {
                 reviewThreads(first: 100, after: $endCursor) {
                   pageInfo { hasNextPage endCursor }
-                  nodes { isResolved comments(first: 1) { nodes { author { login } body originalCommit { oid } } } }
+                  nodes { isResolved comments(first: 1) { nodes { author { login } body createdAt originalCommit { oid } } } }
                 } } } }' \
             --jq '.data.repository.pullRequest.reviewThreads.nodes[]
               | select(.isResolved | not) | .comments.nodes[0]
               | select(.author.login == "argus-terrabit" and .originalCommit.oid == env.HEAD_SHA)
+              | select(.createdAt >= env.REVIEW_STARTED)
               | select(.body | test("^(?:\\*\\*\\[|(?:🔴|🟠) \\*\\*)(blocant|important)"))
               | .body | capture("^(?:\\*\\*\\[|(?:🔴|🟠) \\*\\*)(?<s>blocant|important)").s')
           inline_blocking=$(grep -c '^blocant$' <<< "$flags" || true)
