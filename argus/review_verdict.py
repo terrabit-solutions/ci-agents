@@ -7,7 +7,12 @@ adds no review (the summary is already one); every event dismisses Argus's earli
 and change requests that no longer hold, so the PR shows only the verdict of the last head.
 A review of the same head with the same verdict is kept, not doubled.
 
+STALE, at the start of a review: dismisses Argus's approvals and change requests on other heads,
+so the PR does not stay red (or green) on a verdict of a commit that is no longer its head while
+the new review runs, or when it ends without a verdict. Those of this head stay (a re-run).
+
 Usage: review_verdict.py <owner/repo> <pr_number> <head_sha> <APPROVE|REQUEST_CHANGES|COMMENT> <blocking>
+       review_verdict.py <owner/repo> <pr_number> <head_sha> STALE
 Environment: GH_TOKEN, the Argus app token (Pull requests: write).
 """
 from __future__ import annotations
@@ -60,8 +65,22 @@ def body(event: str, sha: str, blocking: int) -> str:
             "Se corectează și se împinge în PR; review-ul următor retrage cererea.")
 
 
+def dismiss_stale(repo: str, number: str, sha: str) -> None:
+    for old in argus_verdicts(repo, number):
+        if old.get("commit_id") == sha:
+            continue
+        api("PUT", f"/repos/{repo}/pulls/{number}/reviews/{old['id']}/dismissals",
+            {"message": f"Retras la pornirea review-ului Argus pe {sha[:9]}: "
+                        "verdictul era pe un commit mai vechi.", "event": "DISMISS"})
+        print(f"Verdict Argus vechi retras: {old.get('state')} pe {(old.get('commit_id') or '')[:9]}")
+
+
 def main() -> None:
-    repo, number, sha, event, blocking = sys.argv[1:6]
+    repo, number, sha, event = sys.argv[1:5]
+    if event == "STALE":
+        dismiss_stale(repo, number, sha)
+        return
+    blocking = sys.argv[5]
     if event not in STATE:
         sys.exit(f"unknown event: {event}")
     keep = None

@@ -133,5 +133,43 @@ class TestPostReview(unittest.TestCase):
         self.assertNotIn("Nimic de verificat", calls[0][2]["body"])
 
 
+class TestDismissStale(unittest.TestCase):
+    """--stale, at the start of the review run: only Mentor's verdicts on other pushes go."""
+
+    def run_stale(self, reviews: list[dict]) -> list[tuple]:
+        calls = []
+
+        def api(method, path, data=None):
+            calls.append((method, path, data))
+            return reviews if method == "GET" else {}
+
+        argv = ["pr_comment.py", "--stale", "o/r", "1", SHA]
+        with mock.patch.object(pr_comment, "api", api), mock.patch.object(sys, "argv", argv), \
+                mock.patch("builtins.print"):
+            pr_comment.main()
+        return [c for c in calls if c[0] != "GET"]
+
+    def review(self, rid, state, sha=SHA, login=None, body=None):
+        return {"id": rid, "state": state, "commit_id": sha, "html_url": "u",
+                "user": {"login": login or pr_comment.BOT},
+                "body": pr_comment.MARKER if body is None else body}
+
+    def test_old_change_request_and_approval_dismissed(self):
+        calls = self.run_stale([self.review(1, "CHANGES_REQUESTED", sha="old"),
+                                self.review(2, "APPROVED", sha="older")])
+        self.assertEqual([c[:2] for c in calls],
+                         [("PUT", "/repos/o/r/pulls/1/reviews/1/dismissals"),
+                          ("PUT", "/repos/o/r/pulls/1/reviews/2/dismissals")])
+
+    def test_verdict_of_this_push_kept(self):
+        self.assertEqual(self.run_stale([self.review(1, "CHANGES_REQUESTED")]), [])
+
+    def test_comments_others_and_unmarked_untouched(self):
+        reviews = [self.review(1, "COMMENTED", sha="old"),
+                   self.review(2, "CHANGES_REQUESTED", sha="old", login="dhongu"),
+                   self.review(3, "CHANGES_REQUESTED", sha="old", body="fără marcaj")]
+        self.assertEqual(self.run_stale(reviews), [])
+
+
 if __name__ == "__main__":
     unittest.main()
