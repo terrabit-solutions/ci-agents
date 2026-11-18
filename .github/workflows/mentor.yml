@@ -170,6 +170,17 @@ jobs:
           curl -fsS -o /dev/null -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/mentor-ok" 2>/dev/null || true
+      # Mentor's approvals and change requests on older pushes go now, not only when this run
+      # posts its verdict: a PR stayed red on the old push while the new one was being checked,
+      # or for good when a newer push cancelled the run. Those of this push stay (a re-run).
+      - name: Dismiss Mentor's verdicts on older pushes
+        continue-on-error: true
+        env:
+          MENTOR_TOKEN: ${{ steps.label.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 -I .ci-agents/mentor/pr_comment.py --stale "$REPO" "$PR_NUMBER" "$PR_SHA"
       - name: Modules whose sheet must follow the PR
         id: select
         env:

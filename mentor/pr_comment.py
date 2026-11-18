@@ -243,7 +243,24 @@ def post_review(repo: str, number: str, pr_sha: str, report_path: str, verify_pa
         print(f"Review-ul Mentor ({event}) adăugat: {created['html_url']}")
 
 
+def dismiss_stale(repo: str, number: str, pr_sha: str) -> None:
+    """At the start of a review run: dismisses Mentor's approvals and change requests on other
+    pushes, so the PR does not stay red (or green) on the verdict of a push that is no longer its
+    head while this run checks the new one, or when the run is cancelled. Those of this push
+    stay (a re-run)."""
+    for old in mentor_reviews(repo, number):
+        if old.get("commit_id") != pr_sha and old.get("state") in ("APPROVED", "CHANGES_REQUESTED"):
+            api("PUT", f"/repos/{repo}/pulls/{number}/reviews/{old['id']}/dismissals",
+                {"message": f"Retras la pornirea verificării Mentor a push-ului {pr_sha[:9]}: "
+                            "verdictul era pe un push mai vechi.", "event": "DISMISS"})
+            print(f"Verdict Mentor vechi retras: {old.get('state')} pe {(old.get('commit_id') or '')[:9]}")
+
+
 def main() -> None:
+    if sys.argv[1:2] == ["--stale"]:
+        # For the workflow, at the start of the review run: <repo> <number> <pr_sha>.
+        dismiss_stale(*sys.argv[2:5])
+        return
     if sys.argv[1:2] == ["--blocking"]:
         # For the workflow: how many findings block the PR (0: mentor-ok, the check passes).
         print(sum(blocking(load(sys.argv[2]))))

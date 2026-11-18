@@ -413,6 +413,17 @@ jobs:
           # The inline comment buffer of the action's older runs, replayed by every later run
           # on this runner until now (see classify_inline_comments below).
           rm -f /tmp/inline-comments-buffer.jsonl
+      # Argus's approvals and change requests on older heads go now, as argus-ok does, not only
+      # when this review posts its verdict: a PR stayed red on the old head while the new review
+      # ran, or for good when it ended without a verdict. Those of this head stay (a re-run).
+      - name: Dismiss Argus's verdicts on older heads
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 -I .argus/review_verdict.py "$REPO" "$PR_NUMBER" "$HEAD_SHA" STALE
       # Its findings on the PR's files go to .argus/lint.json, for Argus to confirm or
       # reject. Advisory: a failure here leaves Argus to review as before.
       - name: Run tb-odoo-lint on the PR's files

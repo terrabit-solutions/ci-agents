@@ -65,5 +65,45 @@ class TestReviewVerdict(unittest.TestCase):
         self.assertEqual([c[0] for c in calls], ["POST"])
 
 
+class TestDismissStale(unittest.TestCase):
+    """STALE, at the start of a review: only Argus's verdicts on other heads are dismissed."""
+
+    def run_stale(self, reviews: list[dict]) -> list[tuple]:
+        calls = []
+
+        def api(method, path, data=None):
+            calls.append((method, path, data))
+            return reviews if method == "GET" else {}
+
+        argv = ["review_verdict.py", "o/r", "1", SHA, "STALE"]
+        with mock.patch.object(review_verdict, "api", api), mock.patch.object(sys, "argv", argv), \
+                mock.patch("builtins.print"):
+            review_verdict.main()
+        return [c for c in calls if c[0] != "GET"]
+
+    def test_old_change_request_dismissed(self):
+        calls = self.run_stale([review(5, "CHANGES_REQUESTED", sha="old")])
+        self.assertEqual([c[:2] for c in calls], [("PUT", DISMISS.format(5))])
+        self.assertEqual(calls[0][2]["event"], "DISMISS")
+
+    def test_old_approval_dismissed(self):
+        calls = self.run_stale([review(5, "APPROVED", sha="old")])
+        self.assertEqual([c[:2] for c in calls], [("PUT", DISMISS.format(5))])
+
+    def test_verdict_of_this_head_kept(self):
+        # A re-run of the same head: its verdict stays until the new one replaces it.
+        self.assertEqual(self.run_stale([review(5, "CHANGES_REQUESTED")]), [])
+
+    def test_others_and_comments_untouched(self):
+        reviews = [review(5, "CHANGES_REQUESTED", sha="old", login="dhongu"),
+                   review(6, "COMMENTED", sha="old")]
+        self.assertEqual(self.run_stale(reviews), [])
+
+    def test_no_review_posted(self):
+        calls = self.run_stale([review(5, "CHANGES_REQUESTED", sha="old"), review(6, "APPROVED", sha="older")])
+        self.assertTrue(all(c[0] == "PUT" for c in calls))
+        self.assertEqual(len(calls), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
