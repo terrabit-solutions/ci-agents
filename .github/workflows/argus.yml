@@ -499,7 +499,7 @@ jobs:
           # its credentials and system paths are denied outright.
           claude_args: |
             --model sonnet
-            --max-turns 40
+            --max-turns 60
             --allowedTools "Read(./**),Grep(./**),Glob(./**),Bash(.argus/inline.py:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(.argus/comment.sh:*),Bash(.argus/needs-pacioli.sh),Bash(.argus/verdict.sh:*)"
             --disallowedTools "Read(~/.*),Read(~/.*/**),Read(~/runner-*/.*),Read(//etc/**),Read(//proc/**),Read(//root/**)"
       # A clean draft goes to Ready, which starts the tests and Mentor (events made with an
