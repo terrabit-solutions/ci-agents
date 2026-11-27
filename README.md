@@ -58,7 +58,11 @@ reviewed or what Mentor commits.
 
 - `argus/`: `comment.sh`, `inline.py` and `needs-pacioli.sh` (the only writes Argus may make;
   `inline.py` posts a line comment only on code the PR adds and never twice for the same rule
-  on an unchanged line), `verdict.sh` (the counts; a workflow step, not Argus, moves the draft)
+  on an unchanged line), `verdict.sh` (the counts; a workflow step, not Argus, moves the draft),
+  `next_version.py` (run before the review, no AI: the next series' branch, e.g. 20.0 for a PR
+  into 19.0, its version of the changed files in `.argus-next/` and the port PRs found, in
+  `.argus/next.json`; Argus reports per module "ported / to port / not applicable" in the
+  summary, advisory, outside the verdict)
 - `fork-pr/`: `mirror.sh <owner/repo> <pr>`, run by a maintainer (their gh login, so the mirror PR
   starts the workflows) after reading a fork's diff; it refuses a diff touching `.github/`
   unless `ALLOW_GITHUB_CHANGES=1`, and moves the branch again after each push on the fork
