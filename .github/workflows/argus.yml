@@ -446,6 +446,24 @@ jobs:
           else
             echo "No .py/.xml files in the PR."
           fi
+      # Whether the change has reached the next series (a PR into 19.0 -> 20.0): the next
+      # branch's version of the changed files in .argus-next/ and .argus/next.json for Argus,
+      # who only reports it in the summary (advisory, not counted in the verdict).
+      - name: Look at the next Odoo series
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          basic="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$basic"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic"
+          rm -rf .argus-next
+          python3 -I .argus/next_version.py "${{ github.repository }}" "$PR_NUMBER" "$BASE_REF" "$HEAD_REF"
       - name: Argus review
         uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
         env:
@@ -468,6 +486,7 @@ jobs:
             PR NUMBER: ${{ github.event.pull_request.number }}
             ODOO VERSION: ${{ inputs.odoo-version }}
             ODOO CORE: ${{ steps.odoo.outcome == 'success' && '.odoo-src/odoo' || 'indisponibil la această rulare (rețea): nu afirma nimic despre API-ul ORM pe baza surselor Odoo' }}
+            NEXT SERIES: ${{ hashFiles('.argus/next.json') != '' && '.argus/next.json' || 'indisponibil la această rulare: nu pomeni portarea' }}
 
             Fă review-ul acestui PR după regulile din .argus/REVIEW.md.
             Citește întâi fișierul acela și respectă-l întocmai.
